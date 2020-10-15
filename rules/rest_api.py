@@ -1,13 +1,11 @@
-from __future__ import unicode_literals
-from suripyg import SuriHTMLFormat
-from time import time
-import urllib2
-import socket
+
+from .suripyg import SuriHTMLFormat
 
 from django.conf import settings
 from django.utils import timezone
 from django.db import models
 from collections import OrderedDict
+import json
 
 from django.core.exceptions import SuspiciousOperation, ValidationError
 
@@ -24,24 +22,24 @@ from rest_framework import status
 from rest_framework.parsers import MultiPartParser, JSONParser
 from rest_framework.mixins import UpdateModelMixin, RetrieveModelMixin
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rules.rest_permissions import IsOwnerOrReadOnly
 
 from django_filters import rest_framework as filters
-from django_filters import fields as filters_fields
 from elasticsearch.exceptions import ConnectionError
 
-from rules.models import Rule, Category, Ruleset, RuleTransformation, CategoryTransformation, RulesetTransformation, \
-        Source, SourceAtVersion, SourceUpdate, UserAction, UserActionObject, Transformation, SystemSettings, get_system_settings
+from rules.models import Rule, Category, Ruleset, RuleTransformation, CategoryTransformation, RulesetTransformation, FilterSet
+from rules.models import Source, SourceAtVersion, SourceUpdate, UserAction, UserActionObject, Transformation, SystemSettings, get_system_settings
 from rules.views import get_public_sources, fetch_public_sources, extract_rule_references
 from rules.rest_processing import RuleProcessingFilterViewSet
 from rules.es_data import ESData
 
-from rules.es_graphs import es_get_stats, es_get_rules_stats, es_get_dashboard, es_get_sid_by_hosts, es_get_field_stats, \
-        es_get_timeline, es_get_metrics_timeline, es_get_health, es_get_indices, es_get_rules_per_category, es_get_alerts_count, \
-        es_get_latest_stats, es_get_ippair_alerts, es_get_ippair_network_alerts, es_get_alerts_tail, es_suri_log_tail, es_get_poststats
+from rules.es_graphs import ESStats, ESRulesStats, ESSidByHosts, ESFieldStats
+from rules.es_graphs import ESTimeline, ESMetricsTimeline, ESHealth, ESIndicesStats, ESRulesPerCategory, ESAlertsCount
+from rules.es_graphs import ESLatestStats, ESIppairAlerts, ESIppairNetworkAlerts, ESAlertsTail, ESSuriLogTail, ESPoststats
+from rules.es_graphs import ESSigsListHits, ESTopRules, ESError, ESDeleteAlertsBySid, ESEventsFromFlowID, ESFieldsStats
 
 from scirius.rest_utils import SciriusReadOnlyModelViewSet
 from scirius.settings import USE_EVEBOX, USE_KIBANA, KIBANA_PROXY, KIBANA_URL, ELASTICSEARCH_KEYWORD
-from rules.es_graphs import es_get_sigs_list_hits, es_get_top_rules, ESError
 
 Probe = __import__(settings.RULESET_MIDDLEWARE)
 
@@ -174,7 +172,7 @@ class RulesetViewSet(viewsets.ModelViewSet):
     serializer_class = RulesetSerializer
     ordering = ('name',)
     ordering_fields = ('name', 'created_date', 'updated_date', 'rules_count')
-    filter_fields = ('name', 'descr')
+    filterset_fields = ('name', 'descr')
 
     def _validate_categories(self, sources_at_version, categories):
         if len(sources_at_version) == 0 and len(categories) > 0:
@@ -211,10 +209,10 @@ class RulesetViewSet(viewsets.ModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         UserAction.create(
-                action_type='create_ruleset',
-                comment=comment_serializer.validated_data['comment'],
-                user=request.user,
-                ruleset=serializer.instance
+            action_type='create_ruleset',
+            comment=comment_serializer.validated_data['comment'],
+            user=request.user,
+            ruleset=serializer.instance
         )
 
         headers = self.get_success_headers(serializer.data)
@@ -227,10 +225,10 @@ class RulesetViewSet(viewsets.ModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         UserAction.create(
-                action_type='delete_ruleset',
-                user=request.user,
-                ruleset=ruleset,
-                comment=comment_serializer.validated_data['comment']
+            action_type='delete_ruleset',
+            user=request.user,
+            ruleset=ruleset,
+            comment=comment_serializer.validated_data['comment']
         )
         return super(RulesetViewSet, self).destroy(request, *args, **kwargs)
 
@@ -259,10 +257,10 @@ class RulesetViewSet(viewsets.ModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         UserAction.create(
-                action_type='edit_ruleset',
-                comment=comment_serializer.validated_data['comment'],
-                user=request.user,
-                ruleset=instance
+            action_type='edit_ruleset',
+            comment=comment_serializer.validated_data['comment'],
+            user=request.user,
+            ruleset=instance
         )
 
     def update(self, request, *args, **kwargs):
@@ -285,11 +283,11 @@ class RulesetViewSet(viewsets.ModelViewSet):
         ruleset.copy(copy_serializer.validated_data['name'])
 
         UserAction.create(
-                action_type='copy_ruleset',
-                comment=comment,
-                user=request.user,
-                ruleset=ruleset
-            )
+            action_type='copy_ruleset',
+            comment=comment,
+            user=request.user,
+            ruleset=ruleset
+        )
 
         return Response({'copy': 'ok'})
 
@@ -343,15 +341,18 @@ class CategoryViewSet(SciriusReadOnlyModelViewSet):
     serializer_class = CategorySerializer
     ordering = ('name',)
     ordering_fields = ('pk', 'name', 'created_date', 'source')
-    filter_fields = ('name', 'source', 'created_date')
+    filterset_fields = ('name', 'source')
 
     @detail_route(methods=['post'])
     def enable(self, request, pk):
         category = self.get_object()
         serializer = CategoryChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        category.enable(serializer.validated_data['ruleset'], request.user,
-                serializer.validated_data.get('comment', None))
+        category.enable(
+            serializer.validated_data['ruleset'],
+            request.user,
+            serializer.validated_data.get('comment', None)
+        )
         return Response({'enable': 'ok'})
 
     @detail_route(methods=['post'])
@@ -359,8 +360,10 @@ class CategoryViewSet(SciriusReadOnlyModelViewSet):
         category = self.get_object()
         serializer = CategoryChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        category.disable(serializer.validated_data['ruleset'], request.user,
-                serializer.validated_data.get('comment', None))
+        category.disable(
+            serializer.validated_data['ruleset'], request.user,
+            serializer.validated_data.get('comment', None)
+        )
         return Response({'disable': 'ok'})
 
     def get_serializer_class(self):
@@ -399,7 +402,10 @@ class RuleSerializer(serializers.ModelSerializer):
         data = super(RuleSerializer, self).to_representation(instance)
         request = self.context['request']
         highlight_str = request.query_params.get('highlight', 'false')
-        is_highlight = lambda value: bool(value) and value.lower() not in ('false', '0')
+
+        def is_highlight(value):
+            return bool(value) and value.lower() not in ('false', '0')
+
         highlight = is_highlight(highlight_str)
 
         if highlight is True:
@@ -420,24 +426,23 @@ class ListFilter(filters.CharFilter):
         return value
 
     def filter(self, qs, value):
-        multiple_vals = value.split(u",")
+        multiple_vals = value.split(",")
         multiple_vals = self.sanitize(multiple_vals)
-        multiple_vals = map(self.customize, multiple_vals)
+        multiple_vals = list(map(self.customize, multiple_vals))
         for val in multiple_vals:
-            fval = filters_fields.Lookup(val, 'icontains')
-            qs =  super(ListFilter, self).filter(qs, fval)
+            qs = super().filter(qs, val)
         return qs
 
 
 class RuleFilter(filters.FilterSet):
-    min_created = filters.DateFilter(name="created", lookup_expr='gte')
-    max_created = filters.DateFilter(name="created", lookup_expr='lte')
-    min_updated = filters.DateFilter(name="updated", lookup_expr='gte')
-    max_updated = filters.DateFilter(name="updated", lookup_expr='lte')
-    msg = ListFilter(name="msg", lookup_expr='icontains')
-    not_in_msg = ListFilter(name="msg", lookup_expr='icontains', exclude=True)
-    content = ListFilter(name="content", lookup_expr='icontains')
-    not_in_content = ListFilter(name="content", lookup_expr='icontains', exclude=True)
+    min_created = filters.DateFilter(field_name="created", lookup_expr='gte')
+    max_created = filters.DateFilter(field_name="created", lookup_expr='lte')
+    min_updated = filters.DateFilter(field_name="updated", lookup_expr='gte')
+    max_updated = filters.DateFilter(field_name="updated", lookup_expr='lte')
+    msg = ListFilter(field_name="msg", lookup_expr='icontains')
+    not_in_msg = ListFilter(field_name="msg", lookup_expr='icontains', exclude=True)
+    content = ListFilter(field_name="content", lookup_expr='icontains')
+    not_in_content = ListFilter(field_name="content", lookup_expr='icontains', exclude=True)
 
     class Meta:
         model = Rule
@@ -449,31 +454,13 @@ class RuleFilter(filters.FilterSet):
 
 
 class UserActionFilter(filters.FilterSet):
-    min_date = filters.DateFilter(name='date', lookup_expr='gte')
-    max_date = filters.DateFilter(name='date', lookup_expr='lte')
-    comment = ListFilter(name='comment', lookup_expr='icontains')
+    min_date = filters.DateFilter(field_name='date', lookup_expr='gte')
+    max_date = filters.DateFilter(field_name='date', lookup_expr='lte')
+    comment = ListFilter(field_name='comment', lookup_expr='icontains')
 
     class Meta:
         model = UserAction
         fields = ['username', 'date', 'action_type', 'comment', 'user_action_objects__action_key', 'user_action_objects__action_value']
-
-
-def es_hits_params(request):
-    es_params = {}
-
-    # string args
-    for arg in ('hostname', 'qfilter'):
-        if arg in request.query_params:
-            es_params[arg] = request.query_params[arg]
-
-    # numeric args
-    for arg in ('from_date', 'interval'):
-        if arg in request.query_params:
-            es_params[arg] = int(request.query_params[arg])
-
-    if 'hostname' not in es_params:
-        es_params['hostname'] = '*'
-    return es_params
 
 
 class RuleHitsOrderingFilter(OrderingFilter):
@@ -494,20 +481,15 @@ class RuleHitsOrderingFilter(OrderingFilter):
         return value
 
     def _get_hits_order(self, request, order):
-        es_top_kwargs = {
-            'count': Rule.objects.count(),
-            'order': order
-        }
-        es_top_kwargs.update(es_hits_params(request))
         try:
-            result = es_get_top_rules(request, **es_top_kwargs)
+            result = ESTopRules(request).get(count=Rule.objects.count(), order=order)
         except ESError:
             queryset = Rule.objects.order_by('sid')
             queryset = queryset.annotate(hits=models.Value(0, output_field=models.IntegerField()))
             queryset = queryset.annotate(hits=models.ExpressionWrapper(models.Value(0), output_field=models.IntegerField()))
             return queryset.values_list('sid', 'hits')
 
-        result = map(lambda x: (x['key'], x['doc_count']), result)
+        result = [(x['key'], x['doc_count']) for x in result]
         return result
 
     def _filter_min_max(self, request, queryset, hits_order):
@@ -515,11 +497,11 @@ class RuleHitsOrderingFilter(OrderingFilter):
 
         min_hits = self.get_query_param(request, 'hits_min')
         if min_hits is not None:
-            queryset = filter(lambda x: hits_by_sid.get(x.sid, 0) >= min_hits, queryset)
+            queryset = [x for x in queryset if hits_by_sid.get(x.sid, 0) >= min_hits]
 
         max_hits = self.get_query_param(request, 'hits_max')
         if max_hits is not None:
-            queryset = filter(lambda x: hits_by_sid.get(x.sid, 0) <= max_hits, queryset)
+            queryset = [x for x in queryset if hits_by_sid.get(x.sid, 0) <= max_hits]
 
         return queryset
 
@@ -554,9 +536,9 @@ class RuleHitsOrderingFilter(OrderingFilter):
                     pass
 
             if order == 'desc':
-                queryset += rules.values()
+                queryset += list(rules.values())
             else:
-                queryset = rules.values() + queryset
+                queryset = list(rules.values()) + queryset
 
         else:
             if ordering:
@@ -585,7 +567,7 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         isdataat:!1,relative; flow:to_server,established; flowbits: set,traffic/id/bing; flowbits:set,traffic/label/search; noalert; sid:300000000; rev:1;)\\n","imported_date":"2018-07-18T13:54:05.153618+02:00","updated_date":"2018-07-18T13:54:05.153618+02:00"}
 
     Show a rule and its none transformed content in html:\n
-        curl -k https://x.x.x.x/rest/rules/rule/<sid-rule>/\?highlight=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/rule/<sid-rule>/?highlight=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -617,7 +599,7 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         {"1":{"active":true,"valid":{"status":true,"errors":""},"name":"Ruleset1","transformations":{"action":"reject","lateral":null,"target":null}},"2":{"active":true,"valid":{"status":true,"errors":""},"name":"copyRuleset1","transformations":{"action":"reject","lateral":null,"target":null}},"4":{"active":true,"valid":{"status":true,"errors":""},"name":"copyRuleset123","transformations":{"action":"reject","lateral":null,"target":null}}}
 
     Show a transformed rule content in html:\n
-        curl -k https://x.x.x.x/rest/rules/rule/<sid-rule>/content/\?highlight=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/rule/<sid-rule>/content/?highlight=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Get rule's comments:\n
         curl -v -k https://x.x.x.x/rest/rules/rule/<sid-rule>/comment/ -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
@@ -642,7 +624,7 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         <span class=\"err\">)</span><span class=\"w\"></span>\\n</pre></div>\\n"}
 
     Filter by action/reject on all transformed rules:\n
-        curl -k https://x.x.x.x/rest/rules/rule/transformation/\?transfo_type\=action\&transfo_value\=reject -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+        curl -k https://x.x.x.x/rest/rules/rule/transformation/?transfo_type=action&transfo_value=reject -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
 
     ==== POST ====\n
     Disable a rule in a ruleset.\n
@@ -679,8 +661,8 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
     serializer_class = RuleSerializer
     ordering = ('sid',)
     ordering_fields = ('sid', 'category', 'msg', 'imported_date', 'updated_date', 'created', 'updated', 'hits')
-    filter_class = RuleFilter
     filter_backends = (DjangoFilterBackend, SearchFilter, RuleHitsOrderingFilter)
+    filterset_class = RuleFilter
     search_fields = ('sid', 'msg', 'content')
 
     @detail_route(methods=['get'])
@@ -693,6 +675,20 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
             res.append({'url': reference.url, 'key': reference.key, 'value': reference.value})
 
         return Response(res)
+
+    @detail_route(methods=['post'])
+    def delete_alerts(self, request, pk):
+        # return 404 error if pk does not exist
+        self.get_object()
+
+        if hasattr(Probe.common, 'es_delete_alerts_by_sid'):
+            result = Probe.common.es_delete_alerts_by_sid(pk, request=request)
+        else:
+            result = ESDeleteAlertsBySid(request).get(pk)
+            if 'status' in result and result['status'] != 200:
+                return Response({'error: ES request failed, %s' % result['msg']}, status=result['status'])
+            return Response({'delete_alerts': 'ok'})
+        return Response(result)
 
     @list_route(methods=['get'])
     def transformation(self, request):
@@ -718,13 +714,13 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
 
         # Check wrongs filters types (other than type/value)
         if len(copy_params) > 0:
-            params_str = ', '.join(copy_params.keys())
+            params_str = ', '.join(list(copy_params.keys()))
             raise serializers.ValidationError({'filters': ['Wrong filters: "%s"' % params_str]})
 
         # Check key/value filters
         # Key
         if key_str:
-            if key_str not in Transformation.AVAILABLE_MODEL_TRANSFO.keys():
+            if key_str not in list(Transformation.AVAILABLE_MODEL_TRANSFO.keys()):
                 raise serializers.ValidationError({'filters': ['Wrong filter type "%s".' % key_str]})
 
             # Value
@@ -799,9 +795,11 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         rule = self.get_object()
         rulesets = Ruleset.objects.filter(categories__rule=rule)
         res = {}
-
         highlight_str = request.query_params.get('highlight', 'false')
-        is_highlight = lambda value: bool(value) and value.lower() not in ('false', '0')
+
+        def is_highlight(value):
+            return bool(value) and value.lower() not in ('false', '0')
+
         highlight = is_highlight(highlight_str)
 
         for ruleset in rulesets:
@@ -820,11 +818,11 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
             comment_serializer.is_valid(raise_exception=True)
 
             UserAction.create(
-                    action_type='comment_rule',
-                    comment=comment,
-                    user=request.user,
-                    rule=rule
-                )
+                action_type='comment_rule',
+                comment=comment,
+                user=request.user,
+                rule=rule
+            )
             return Response({'comment': 'ok'})
         elif request.method == 'GET':
             rule = self.get_object()
@@ -849,11 +847,11 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         rule.toggle_availability()
 
         UserAction.create(
-                action_type='toggle_availability',
-                comment=comment,
-                user=request.user,
-                rule=rule
-            )
+            action_type='toggle_availability',
+            comment=comment,
+            user=request.user,
+            rule=rule
+        )
 
         return Response({'toggle_availability': 'ok'})
 
@@ -862,8 +860,10 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         rule = self.get_object()
         serializer = RuleChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        rule.enable(serializer.validated_data['ruleset'], request.user,
-                serializer.validated_data.get('comment', None))
+        rule.enable(
+            serializer.validated_data['ruleset'], request.user,
+            serializer.validated_data.get('comment', None)
+        )
         return Response({'enable': 'ok'})
 
     @detail_route(methods=['post'])
@@ -871,8 +871,10 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         rule = self.get_object()
         serializer = RuleChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        rule.disable(serializer.validated_data['ruleset'], request.user,
-                serializer.validated_data.get('comment', None))
+        rule.disable(
+            serializer.validated_data['ruleset'], request.user,
+            serializer.validated_data.get('comment', None)
+        )
         return Response({'disable': 'ok'})
 
     def get_serializer_class(self):
@@ -920,16 +922,14 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         }
 
     def _add_hits(self, request, data):
-        sids = ','.join([unicode(rule['sid']) for rule in data])
+        sids = ','.join([str(rule['sid']) for rule in data])
 
-        ## reformat ES's output
-        es_params = es_hits_params(request)
-        es_params['host'] = es_params.pop('hostname')
         try:
-            result = es_get_sigs_list_hits(request, sids, **es_params)
+            result = ESSigsListHits(request).get(sids)
         except ESError:
             return data
 
+        # reformat ES's output
         hits = {}
         for r in result:
             hits[r['key']] = self._scirius_hit(r)
@@ -950,7 +950,7 @@ class RuleViewSet(SciriusReadOnlyModelViewSet):
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
         serializer = self.get_serializer(page, many=True)
-        data = self._add_hits(request, serializer.data)
+        self._add_hits(request, serializer.data)
         return self.get_paginated_response(serializer.data)
 
 
@@ -996,7 +996,7 @@ class BaseTransformationViewSet(viewsets.ModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         fields = kwargs['fields']
-        for key, value in dict(fields).iteritems():
+        for key, value in dict(fields).items():
             fields[key] = serializer.validated_data[value]
 
         fields['comment'] = comment
@@ -1018,7 +1018,7 @@ class BaseTransformationViewSet(viewsets.ModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         fields = kwargs['fields']
-        for key, value in dict(fields).iteritems():
+        for key, value in dict(fields).items():
             fields[key] = getattr(instance, value)
 
         fields['comment'] = comment
@@ -1063,7 +1063,7 @@ class BaseTransformationViewSet(viewsets.ModelViewSet):
         serializer.save()
 
         fields = params['fields']
-        for key, value in dict(fields).iteritems():
+        for key, value in dict(fields).items():
             if value in serializer.validated_data:
                 fields[key] = serializer.validated_data[value]
             else:
@@ -1150,7 +1150,7 @@ class RulesetTransformationViewSet(BaseTransformationViewSet):
     queryset = RulesetTransformation.objects.all()
     serializer_class = RulesetTransformationSerializer
     ordering = ('pk',)
-    filter_fields = ('ruleset_transformation',)
+    filterset_fields = ('ruleset_transformation',)
     ordering_fields = ('ruleset_transformation',)
     _fields = {'ruleset': 'ruleset_transformation', 'trans_type': 'key', 'trans_value': 'value'}
     _action_type = 'transform_ruleset'
@@ -1247,7 +1247,7 @@ class CategoryTransformationViewSet(BaseTransformationViewSet):
     queryset = CategoryTransformation.objects.all()
     serializer_class = CategoryTransformationSerializer
     ordering = ('pk',)
-    filter_fields = ('category_transformation', 'ruleset')
+    filterset_fields = ('category_transformation', 'ruleset')
     ordering_fields = ('pk', 'ruleset', 'category_transformation')
     _fields = {'ruleset': 'ruleset', 'trans_type': 'key', 'trans_value': 'value', 'category': 'category_transformation'}
     _action_type = 'transform_category'
@@ -1351,7 +1351,7 @@ class RuleTransformationViewSet(BaseTransformationViewSet):
     queryset = RuleTransformation.objects.all()
     serializer_class = RuleTransformationSerializer
     ordering = ('pk',)
-    filter_fields = ('rule_transformation', 'ruleset')
+    filterset_fields = ('rule_transformation', 'ruleset')
     ordering_fields = ('pk', 'ruleset', 'rule_transformation')
     _fields = {'ruleset': 'ruleset', 'trans_type': 'key', 'trans_value': 'value', 'rule': 'rule_transformation'}
     _action_type = 'transform_rule'
@@ -1381,7 +1381,7 @@ class BaseSourceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Source
         fields = ('pk', 'name', 'created_date', 'updated_date', 'method', 'datatype', 'uri', 'cert_verif',
-                  'cats_count', 'rules_count', 'use_iprep')
+                  'cats_count', 'rules_count', 'use_iprep', 'version')
         read_only_fields = ('pk', 'created_date', 'updated_date', 'method', 'datatype', 'cert_verif',
                             'cats_count', 'rules_count',)
 
@@ -1412,10 +1412,10 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
         source = serializer.instance
 
         UserAction.create(
-                action_type='create_source',
-                comment=comment_serializer.validated_data['comment'],
-                user=request.user,
-                source=source
+            action_type='create_source',
+            comment=comment_serializer.validated_data['comment'],
+            user=request.user,
+            source=source
         )
 
         headers = self.get_success_headers(serializer.data)
@@ -1430,10 +1430,10 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         UserAction.create(
-                action_type='delete_source',
-                user=request.user,
-                source=source,
-                comment=comment_serializer.validated_data['comment']
+            action_type='delete_source',
+            user=request.user,
+            source=source,
+            comment=comment_serializer.validated_data['comment']
         )
         return super(BaseSourceViewSet, self).destroy(request, *args, **kwargs)
 
@@ -1453,19 +1453,19 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
             msg = 'No upload is allowed. method is currently "%s"' % source.method
             raise serializers.ValidationError({'upload': [msg]})
 
-        if not request.FILES.has_key('file'):
+        if 'file' not in request.FILES:
             raise serializers.ValidationError({'file': ['This field is required.']})
 
         try:
             source.handle_uploaded_file(request.FILES['file'])
         except Exception as error:
-            raise serializers.ValidationError({'upload': [unicode(error)]})
+            raise serializers.ValidationError({'upload': [str(error)]})
 
         UserAction.create(
-                action_type='upload_source',
-                comment=comment_serializer.validated_data['comment'],
-                user=request.user,
-                source=source
+            action_type='upload_source',
+            comment=comment_serializer.validated_data['comment'],
+            user=request.user,
+            source=source
         )
 
         return Response({'upload': 'ok'}, status=200)
@@ -1476,7 +1476,10 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
         # because we are not using serializer there
         comment = request.data.get('comment', None)
         is_async_str = request.query_params.get('async', 'false')
-        is_async = lambda value: bool(value) and value.lower() not in ('false', '0')
+
+        def is_async(value):
+            return bool(value) and value.lower() not in ('false', '0')
+
         async_ = is_async(is_async_str)
 
         source = self.get_object()
@@ -1505,10 +1508,10 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError({'update': [msg]})
 
         UserAction.create(
-                action_type='update_source',
-                comment=comment_serializer.validated_data['comment'],
-                user=request.user,
-                source=source
+            action_type='update_source',
+            comment=comment_serializer.validated_data['comment'],
+            user=request.user,
+            source=source
         )
         return Response({'update': msg})
 
@@ -1517,7 +1520,7 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
         try:
             public_sources = get_public_sources(False)
         except Exception as e:
-            raise serializers.ValidationError({'list': [unicode(e)]})
+            raise serializers.ValidationError({'list': [str(e)]})
         return Response(public_sources['sources'])
 
     @list_route(methods=['get'])
@@ -1525,7 +1528,7 @@ class BaseSourceViewSet(viewsets.ModelViewSet):
         try:
             fetch_public_sources()
         except Exception as e:
-            raise serializers.ValidationError({'fetch': [unicode(e)]})
+            raise serializers.ValidationError({'fetch': [str(e)]})
         return Response({'fetch': 'ok'})
 
     @detail_route(methods=['post'])
@@ -1566,7 +1569,7 @@ class PublicSourceSerializer(BaseSourceSerializer):
         try:
             public_sources = get_public_sources(False)
         except Exception as e:
-            raise serializers.ValidationError({'list': [unicode(e)]})
+            raise serializers.ValidationError({'list': [str(e)]})
 
         if source_name not in public_sources['sources']:
             raise exceptions.NotFound(detail='Unknown public source "%s"' % source_name)
@@ -1580,7 +1583,7 @@ class PublicSourceSerializer(BaseSourceSerializer):
                 raise serializers.ValidationError({'secret_code': ['Secret code is needed']})
             uri = uri % {'secret-code': validated_data.pop('secret_code')}
 
-        uri = uri % {'__version__': '4.0'}
+        uri = uri % {'__version__': '5.0'}
 
         validated_data['uri'] = uri
         validated_data['datatype'] = public_sources['sources'][source_name]['datatype']
@@ -1630,9 +1633,9 @@ class PublicSourceViewSet(BaseSourceViewSet):
         {"pk":4,"name":"sonic public source","created_date":"2018-05-07T11:54:56.450782+02:00","updated_date":"2018-05-07T11:54:56.450791+02:00","method":"http","datatype":"sig","uri":"https://raw.githubusercontent.com/jasonish/suricata-trafficid/master/rules/traffic-id.rules","cert_verif":true,"cats_count":0,"rules_count":0,"public_source":"oisf/trafficid"}
 
     Update public source:\n
-        curl -k https://x.x.x.x/rest/rules/public_source/<pk-public-source>/update_source/\\?async=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X POST
+        curl -k https://x.x.x.x/rest/rules/public_source/<pk-public-source>/update_source/?async=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X POST
 
-        curl -k https://x.x.x.x/rest/rules/public_source/<pk-public-source>/update_source/\\?async=false -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X POST
+        curl -k https://x.x.x.x/rest/rules/public_source/<pk-public-source>/update_source/?async=false -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X POST
 
     Return:\n
         HTTP/1.1 200 OK
@@ -1658,7 +1661,7 @@ class PublicSourceViewSet(BaseSourceViewSet):
     serializer_class = PublicSourceSerializer
     ordering = ('name',)
     ordering_fields = ('name', 'created_date', 'updated_date', 'cats_count', 'rules_count',)
-    filter_fields = ('name', 'method')
+    filterset_fields = ('name', 'method')
     search_fields = ('name', 'method')
 
 
@@ -1734,9 +1737,9 @@ class SourceViewSet(BaseSourceViewSet):
     serializer_class = SourceSerializer
     parser_classes = (MultiPartParser, JSONParser)
     ordering = ('name',)
-    ordering_fields = ('name', 'created_date', 'updated_date', 'cats_count', 'rules_count',)
-    filter_fields = ('name', 'method')
-    search_fields = ('name', 'method')
+    ordering_fields = ('name', 'created_date', 'updated_date', 'cats_count', 'rules_count', 'datatype')
+    filterset_fields = ('name', 'method', 'datatype')
+    search_fields = ('name', 'method', 'datatype')
 
     @detail_route(methods=['post'])
     def upload(self, request, pk):
@@ -1852,7 +1855,7 @@ class UserActionViewSet(SciriusReadOnlyModelViewSet):
         actions_dict = get_middleware_module('common').get_user_actions_dict()
 
         res = OrderedDict()
-        for key, value in actions_dict.iteritems():
+        for key, value in actions_dict.items():
             res.update({key: value['title']})
 
         return Response({'action_type_list': res})
@@ -1892,16 +1895,16 @@ class ChangelogViewSet(viewsets.ReadOnlyModelViewSet):
         "version":"9b73cdc0e25b36ce3a80fdcced631f3769a4f6f6","changed":2}]}
 
     Show changelogs filter by source:\n
-        curl -k https://x.x.x.x/rest/rules/changelog/source/\?source\=2 -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+        curl -k https://x.x.x.x/rest/rules/changelog/source/?source=2 -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
 
     Show changelogs filter by version:\n
-        curl -k https://x.x.x.x/rest/rules/changelog/source/\?version\=9b73cdc0e25b36ce3a80fdcced631f3769a4f6f6 -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+        curl -k https://x.x.x.x/rest/rules/changelog/source/?version=9b73cdc0e25b36ce3a80fdcced631f3769a4f6f6 -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
 
     =============================================================================================================================================================
     """
     serializer_class = ChangelogSerializer
     queryset = SourceUpdate.objects.all()
-    filter_fields = ('source', 'version')
+    filterset_fields = ('source', 'version')
     ordering = ('-pk',)
     ordering_fields = ('pk', 'source', 'version',)
 
@@ -1915,27 +1918,10 @@ class ESBaseViewSet(APIView):
         try:
             return self._get(request, format)
         except ESError as e:
-            return Response({'error: ES request failed, %s' % unicode(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error: ES request failed, %s' % str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _get(self, request, format):
         raise NotImplementedError('This is an abstract class. ES sub classes must override this method')
-
-
-class ESDashboardViewSet(ESBaseViewSet):
-    """
-    =============================================================================================================================================================
-    ==== GET ====\n
-    Show dashboard :\n
-        curl -k https://x.x.x.x/rest/rules/es/dashboard/ -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
-
-    Return:\n
-        HTTP/1.1 200 OK
-        {"SN-FILE-Transactions":"SN FILE-Transactions","SN-VLAN":"SN VLAN","SN-OVERVIEW":"SN OVERVIEW","SN-SMTP":"SN SMTP","SN-HTTP":"SN HTTP","SN-ALERTS":"SN ALERTS","SN-TLS":"SN TLS","SN-IDS":"SN IDS","SN-STATS":"SN STATS","SN-FLOW":"SN FLOW","SN-SSH":"SN SSH","SN-DNS":"SN DNS","SN-ALL":"SN ALL"}
-
-    =============================================================================================================================================================
-    """
-    def _get(self, request, format=None):
-        return Response(es_get_dashboard(count=settings.KIBANA_DASHBOARDS_COUNT))
 
 
 class ESRulesViewSet(ESBaseViewSet):
@@ -1945,8 +1931,8 @@ class ESRulesViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show rules stats:\n
-        curl -k https://x.x.x.x/rest/rules/es/rules/\?host\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
-        curl -k https://x.x.x.x/rest/rules/es/rules/\?host\=ProbeMain\&from_date\=1537264545477\&filter=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+        curl -k https://x.x.x.x/rest/rules/es/rules/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+        curl -k https://x.x.x.x/rest/rules/es/rules/?hosts=ProbeMain&from_date=1537264545477&qfilter=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -1956,20 +1942,14 @@ class ESRulesViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        host = request.GET.get('host', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-        qfilter = request.GET.get('filter', None)
-
         errors = {}
-        if host is None:
-            errors['host'] = ['This field is required.']
+        if 'hosts' not in request.GET:
+            errors['hosts'] = ['This field is required.']
 
         if len(errors) > 0:
             raise serializers.ValidationError(errors)
 
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response({'rules': es_get_rules_stats(request, host, from_date=from_date, qfilter=qfilter, dict_format=True)})
+        return Response({'rules': ESRulesStats(request).get(dict_format=True)})
 
 
 class ESRuleViewSet(ESBaseViewSet):
@@ -1977,7 +1957,7 @@ class ESRuleViewSet(ESBaseViewSet):
     =============================================================================================================================================================
     ==== GET ====\n
     Show a rule stats:\n
-        curl -k https://x.x.x.x/rest/rules/es/rule/\?sid\=2522628\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/rule/?sid=2522628&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -1987,9 +1967,7 @@ class ESRuleViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
         sid = request.GET.get('sid', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
 
         errors = {}
         if sid is None:
@@ -1998,8 +1976,7 @@ class ESRuleViewSet(ESBaseViewSet):
         if len(errors) > 0:
             raise serializers.ValidationError(errors)
 
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response({'rule': es_get_sid_by_hosts(request, sid, from_date=from_date, dict_format=True)})
+        return Response({'rule': ESSidByHosts(request).get(sid, dict_format=True)})
 
 
 class ESTopRulesViewSet(ESBaseViewSet):
@@ -2007,18 +1984,14 @@ class ESTopRulesViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        host = request.GET.get('host', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-        qfilter = request.GET.get('filter', None)
         count = request.GET.get('count', 20)
         order = request.GET.get('order', "desc")
 
-        if host is None:
-            errors = {'host': ['This field is required.']}
+        if 'hosts' not in request.GET:
+            errors = {'hosts': ['This field is required.']}
             raise serializers.ValidationError(errors)
 
-        return Response(es_get_top_rules(request, host, from_date=from_date, qfilter=qfilter, count=count, order=order))
+        return Response(ESTopRules(request).get(count=count, order=order))
 
 
 class ESSigsListViewSet(ESBaseViewSet):
@@ -2026,23 +1999,19 @@ class ESSigsListViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        host = request.GET.get('host', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-        qfilter = request.GET.get('filter', None)
         sids = request.GET.get('sids', 20)
 
         errors = {}
         if sids is None:
             errors['sids'] = ['This field is required.']
 
-        if host is None:
-            errors['host'] = ['This field is required.']
+        if 'hosts' not in request.GET:
+            errors['hosts'] = ['This field is required.']
 
         if len(errors) > 0:
             raise serializers.ValidationError(errors)
 
-        return Response(es_get_sigs_list_hits(request, sids, host, from_date=from_date, qfilter=qfilter))
+        return Response(ESSigsListHits(request).get(sids))
 
 
 class ESPostStatsViewSet(ESBaseViewSet):
@@ -2050,17 +2019,41 @@ class ESPostStatsViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
         value = request.GET.get('value', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
+        return Response(ESPoststats(request).get(value=value))
 
-        if chosts:
-            chosts = chosts.split(',')
 
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_poststats(from_date=from_date, value=value, hosts=chosts, qfilter=qfilter))
+class ESFieldsStatsViewSet(ESBaseViewSet):
+    """
+    """
+
+    def _get(self, request, format=None):
+        errors = {}
+        fields = request.GET.get('fields', None)
+        sid = request.GET.get('sid', None)
+
+        if fields is None:
+            errors = {'fields': ['This field is required.']}
+            raise serializers.ValidationError(errors)
+
+        count = request.GET.get('page_size', 10)
+
+        field_list = fields.split(',')
+        tmpl_fields = []
+        for field in field_list:
+            if field not in ['src_port', 'dest_port', 'alert.signature_id', 'alert.severity', 'http.length', 'http.status', 'vlan', 'geoip.provider.autonomous_system_number', 'tunnel.depth']:
+                tmpl_fields.append({'name': field, 'key': field + '.' + settings.ELASTICSEARCH_KEYWORD})
+            else:
+                tmpl_fields.append({'name': field, 'key': field})
+
+        values = ESFieldsStats(request).get(
+            sid,
+            tmpl_fields,
+            count=count,
+            dict_format=True
+        )
+
+        return Response(values)
 
 
 class ESFieldStatsViewSet(ESBaseViewSet):
@@ -2068,37 +2061,26 @@ class ESFieldStatsViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
         errors = {}
         field = request.GET.get('field', None)
         sid = request.GET.get('sid', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-        qfilter = request.GET.get('qfilter', None)
-
-        if sid is not None:
-            if qfilter is not None:
-                qfilter = 'alert.signature_id:%s AND %s' % (sid, qfilter)
-            else:
-                qfilter = 'alert.signature_id:%s' % sid
 
         if field is None:
             errors = {'field': ['This field is required.']}
             raise serializers.ValidationError(errors)
 
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
         filter_ip = request.GET.get('field', 'src_ip')
         count = request.GET.get('page_size', 10)
 
-        if filter_ip not in ['src_port', 'dest_port', 'alert.signature_id', 'alert.severity', 'http.length', 'http.status', 'vlan']:
+        if filter_ip not in ['src_port', 'dest_port', 'alert.signature_id', 'alert.severity', 'http.length', 'http.status', 'vlan', 'geoip.provider.autonomous_system_number', 'tunnel.depth']:
             filter_ip = filter_ip + '.' + settings.ELASTICSEARCH_KEYWORD
 
-        hosts = es_get_field_stats(request,
-                                   filter_ip,
-                                   '*',
-                                   from_date=from_date,
-                                   count=count,
-                                   qfilter=qfilter,
-                                   dict_format=True)
+        hosts = ESFieldStats(request).get(
+            sid,
+            filter_ip,
+            count=count,
+            dict_format=True
+        )
 
         return Response(hosts)
 
@@ -2113,14 +2095,14 @@ class ESFilterIPViewSet(ESBaseViewSet):
            rule_source / rule_target: IP of the source & target of the attack
 
     Show a rule stats:\n
-        curl -k https://x.x.x.x/rest/rules/es/filter_ip/\?field\=rule_src\&sid\=2522628\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/filter_ip/?field=rule_src&sid=2522628&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
         [{"key":"212.47.239.163","doc_count":1}]
 
     Show a rule stats:\n
-        curl -k https://x.x.x.x/rest/rules/es/filter_ip/\?field\=rule_dest\&sid\=2522628\&from_date\=1537264545477 -H 'Authorization: Token dba92b07973ba061f9a0d48a1afd98d1e7b717d6' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/filter_ip/?field=rule_dest&sid=2522628&from_date=1537264545477 -H 'Authorization: Token dba92b07973ba061f9a0d48a1afd98d1e7b717d6' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2132,37 +2114,26 @@ class ESFilterIPViewSet(ESBaseViewSet):
     RULE_FIELDS_MAPPING = {'rule_src': 'src_ip', 'rule_dest': 'dest_ip', 'rule_source': 'alert.source.ip', 'rule_target': 'alert.target.ip'}
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
         errors = {}
         field = request.GET.get('field', None)
         sid = request.GET.get('sid', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-        qfilter = request.GET.get('qfilter', None)
-
-        if sid is not None:
-            if qfilter is not None:
-                qfilter = 'alert.signature_id:%s AND %s' % (sid, qfilter)
-            else:
-                qfilter = 'alert.signature_id:%s' % sid
 
         if field is None:
             errors['field'] = ['This field is required.']
             raise serializers.ValidationError(errors)
 
-        if field not in self.RULE_FIELDS_MAPPING.keys():
+        if field not in list(self.RULE_FIELDS_MAPPING.keys()):
             raise exceptions.NotFound(detail='"%s" is not a valid field' % field)
 
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
         filter_ip = self.RULE_FIELDS_MAPPING[field]
         count = request.GET.get('page_size', 10)
 
-        hosts = es_get_field_stats(request,
-                                   filter_ip + '.' + settings.ELASTICSEARCH_KEYWORD,
-                                   '*',
-                                   from_date=from_date,
-                                   count=count,
-                                   qfilter=qfilter,
-                                   dict_format=True)
+        hosts = ESFieldStats(request).get(
+            sid,
+            filter_ip + '.' + settings.ELASTICSEARCH_KEYWORD,
+            count=count,
+            dict_format=True
+        )
 
         return Response(hosts)
 
@@ -2174,8 +2145,8 @@ class ESTimelineViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show timeline:\n
-        curl -k https://x.x.x.x/rest/rules/es/timeline/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        curl -k https://x.x.x.x/rest/rules/es/timeline/\?hosts\=ProbeMain\&from_date\=1537264545477\&filter\=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/timeline/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/timeline/?hosts=ProbeMain&from_date=1537264545477&qfilter=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
        HTTP/1.1 200 OK
@@ -2185,17 +2156,8 @@ class ESTimelineViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
         tags = False if request.GET.get('target', 'false') == 'false' else True
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_timeline(from_date=from_date, hosts=chosts, qfilter=qfilter, tags=tags))
+        return Response(ESTimeline(request).get(tags=tags))
 
 
 class ESLogstashEveViewSet(ESBaseViewSet):
@@ -2206,10 +2168,10 @@ class ESLogstashEveViewSet(ESBaseViewSet):
 
     Logstash Events examples:\n
         1. curl -k "https://x.x.x.x/rest/rules/es/logstash_eve/?value=system.cpu.user.pct&from_date=1540211796478&hosts=stamus"  -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
-        2. curl -k https://x.x.x.x/rest/rules/es/logstash_eve/\?value\=system.memory.actual.used.pct\&from_date\=1537264545477\&hosts\=ProbeMain -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        3. curl -k https://x.x.x.x/rest/rules/es/logstash_eve/\?value\=system.network.in.bytes\&from_date\=1537264545477\&hosts\=ProbeMain\&filter\=system.network.name:eth0 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        4. curl -k https://x.x.x.x/rest/rules/es/logstash_eve/\?value\=system.filesystem.used.pct\&from_date\=1537264545477\&hosts\=ProbeMain\&filter\=system.filesystem.mount_point.raw:/var/lib/lxc/elasticsearch/rootfs/var/lib/elasticsearch -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        5. curl -k "https://x.x.x.x/rest/rules/es/logstash_eve/?value=system.filesystem.used.pct&from_date=1540210439302&hosts=stamus&filter=system.filesystem.mount_point.raw:\"/var/lib/lxc/elasticsearch/rootfs/var/lib/elasticsearch\"" -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+        2. curl -k https://x.x.x.x/rest/rules/es/logstash_eve/?value=system.memory.actual.used.pct&from_date=1537264545477&hosts=ProbeMain -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        3. curl -k https://x.x.x.x/rest/rules/es/logstash_eve/?value=system.network.in.bytes&from_date=1537264545477&hosts=ProbeMain&qfilter=system.network.name:eth0 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        4. curl -k https://x.x.x.x/rest/rules/es/logstash_eve/?value=system.filesystem.used.pct&from_date=1537264545477&hosts=ProbeMain&qfilter=system.filesystem.mount_point.raw:/var/lib/lxc/elasticsearch/rootfs/var/lib/elasticsearch -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        5. curl -k "https://x.x.x.x/rest/rules/es/logstash_eve/?value=system.filesystem.used.pct&from_date=1540210439302&hosts=stamus&qfilter=system.filesystem.mount_point.raw:\"/var/lib/lxc/elasticsearch/rootfs/var/lib/elasticsearch\"" -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
 
     Return:\n
         1. {"from_date":1540211796478,"interval":868000,"stamus":{"entries":[{"mean":0.2518125013448298,"time":1540213664000},{"mean":0.12792068951088806,"time":1540214532000},{"mean":0.2473448278575108,"time":1540215400000},
@@ -2266,17 +2228,8 @@ class ESLogstashEveViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
         value = request.GET.get('value', None)
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_metrics_timeline(from_date=from_date, value=value, hosts=chosts, qfilter=qfilter))
+        return Response(ESMetricsTimeline(request).get(value=value))
 
 
 class ESHealthViewSet(ESBaseViewSet):
@@ -2294,7 +2247,7 @@ class ESHealthViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        return Response(es_get_health())
+        return Response(ESHealth(request).get())
 
 
 class ESStatsViewSet(ESBaseViewSet):
@@ -2323,7 +2276,22 @@ class ESStatsViewSet(ESBaseViewSet):
     =============================================================================================================================================================
     """
     def _get(self, request, format=None):
-        return Response(es_get_stats())
+        return Response(ESStats(request).get())
+
+
+class ESCheckVersionViewSet(APIView):
+    """
+    """
+    permission_classes = (IsAdminUser,)
+
+    def post(self, request, format=None):
+        from scirius.utils import get_middleware_module
+        res = {}
+        try:
+            res = get_middleware_module('common').check_es_version(request)
+        except (ValueError, ValidationError) as error:
+            res['error'] = 'Invalid hostname or IP, %s' % error
+        return Response(res)
 
 
 class ESIndicesViewSet(ESBaseViewSet):
@@ -2348,7 +2316,7 @@ class ESIndicesViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        return Response({'indices': es_get_indices()})
+        return Response({'indices': ESIndicesStats(request).get()})
 
 
 class ESRulesPerCategoryViewSet(ESBaseViewSet):
@@ -2358,8 +2326,8 @@ class ESRulesPerCategoryViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show rules per category:\n
-        curl -k https://x.x.x.x/rest/rules/es/rules_per_category/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        curl -k https://x.x.x.x/rest/rules/es/rules_per_category/\?hosts\=ProbeMain\&from_date\=1537264545477\&filter\=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/rules_per_category/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/rules_per_category/?hosts=ProbeMain&from_date=1537264545477&qfilter=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2376,18 +2344,7 @@ class ESRulesPerCategoryViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts is None:
-            raise serializers.ValidationError({'hosts': ['This field is required.']})
-        else:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_rules_per_category(from_date=from_date, hosts=chosts, qfilter=qfilter))
+        return Response(ESRulesPerCategory(request).get())
 
 
 class ESAlertsCountViewSet(ESBaseViewSet):
@@ -2397,9 +2354,9 @@ class ESAlertsCountViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show alerts count:\n
-        1. curl -k https://x.x.x.x/rest/rules/es/alerts_count/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        2. curl -k https://x.x.x.x/rest/rules/es/alerts_count/\?hosts\=ProbeMain\&from_date\=1537264545477&prev=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        3. curl -k https://x.x.x.x/rest/rules/es/alerts_count/\?hosts\=ProbeMain\&from_date\=1537264545477&prev=true\&filter\=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        1. curl -k https://x.x.x.x/rest/rules/es/alerts_count/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        2. curl -k https://x.x.x.x/rest/rules/es/alerts_count/?hosts=ProbeMain&from_date=1537264545477&prev=true -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        3. curl -k https://x.x.x.x/rest/rules/es/alerts_count/?hosts=ProbeMain&from_date=1537264545477&prev=true&qfilter=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2410,19 +2367,9 @@ class ESAlertsCountViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
         prev = request.GET.get('prev', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
         prev = 1 if prev is not None and prev != 'false' else None
-
-        return Response(es_get_alerts_count(from_date=from_date, hosts=chosts, qfilter=qfilter, prev=prev))
+        return Response(ESAlertsCount(request).get(prev=prev))
 
 
 class ESLatestStatsViewSet(ESBaseViewSet):
@@ -2432,7 +2379,7 @@ class ESLatestStatsViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show alerts count:\n
-        curl -k https://192.168.0.17/rest/rules/es/latest_stats/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token dba92b07973ba061f9a0d48a1afd98d1e7b717d6' -H 'Content-Type: application/json' -X GET
+        curl -k https://192.168.0.17/rest/rules/es/latest_stats/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token dba92b07973ba061f9a0d48a1afd98d1e7b717d6' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2452,16 +2399,7 @@ class ESLatestStatsViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_latest_stats(from_date=from_date, hosts=chosts, qfilter=qfilter))
+        return Response(ESLatestStats(request).get())
 
 
 class ESIPPairAlertsViewSet(ESBaseViewSet):
@@ -2471,8 +2409,8 @@ class ESIPPairAlertsViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show ip pair alerts:\n
-        curl -k https://x.x.x.x/rest/rules/es/ip_pair_alerts/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
-        curl -k https://x.x.x.x/rest/rules/es/ip_pair_alerts/\?hosts\=ProbeMain\&from_date\=1537264545477\&filter\=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/ip_pair_alerts/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/ip_pair_alerts/?hosts=ProbeMain&from_date=1537264545477&qfilter=<"filter in Elasticsearch Query String Query format"> -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2487,16 +2425,7 @@ class ESIPPairAlertsViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_ippair_alerts(from_date=from_date, hosts=chosts, qfilter=qfilter))
+        return Response(ESIppairAlerts(request).get())
 
 
 class ESIPPairNetworkAlertsViewSet(ESBaseViewSet):
@@ -2506,7 +2435,7 @@ class ESIPPairNetworkAlertsViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show ip pair network alerts:\n
-        curl -k https://x.x.x.x/rest/rules/es/ip_pair_network_alerts/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/ip_pair_network_alerts/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2517,16 +2446,7 @@ class ESIPPairNetworkAlertsViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_get_ippair_network_alerts(from_date=from_date, hosts=chosts, qfilter=qfilter))
+        return Response(ESIppairNetworkAlerts(request).get())
 
 
 class ESAlertsTailViewSet(ESBaseViewSet):
@@ -2536,7 +2456,7 @@ class ESAlertsTailViewSet(ESBaseViewSet):
     qfilter: "filter in Elasticsearch Query String Query format"
 
     Show alert tail:\n
-        curl -k https://x.x.x.x/rest/rules/es/alerts_tail/\?from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://x.x.x.x/rest/rules/es/alerts_tail/?from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2547,13 +2467,28 @@ class ESAlertsTailViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        qfilter = request.GET.get('filter', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
         search_target = request.GET.get('search_target', True)
         search_target = False if search_target is not True else True
-        return Response(es_get_alerts_tail(from_date=from_date, qfilter=qfilter, search_target=search_target))
+        return Response(ESAlertsTail(request).get(search_target=search_target))
+
+
+class ESEventsFromFlowIDViewSet(ESBaseViewSet):
+    """
+    =============================================================================================================================================================
+    ==== GET ====\n
+    Show events from an alert.flow_id:\n
+        curl -k https://x.x.x.x/rest/rules/es/events_from_flow_id/?from_date=1537264545477&qfilter=flow_id:1259054449405574 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+
+    Return:\n
+        HTTP/1.1 200 OK
+        []
+
+    =============================================================================================================================================================
+
+    """
+
+    def _get(self, request, format=None):
+        return Response(ESEventsFromFlowID(request).get())
 
 
 class ESSuriLogTailViewSet(ESBaseViewSet):
@@ -2561,7 +2496,7 @@ class ESSuriLogTailViewSet(ESBaseViewSet):
     =============================================================================================================================================================
     ==== GET ====\n
     Show alert tail:\n
-        curl -k https://192.168.0.17/rest/rules/es/suri_log_tail/\?hosts\=ProbeMain\&from_date\=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
+        curl -k https://192.168.0.17/rest/rules/es/suri_log_tail/?hosts=ProbeMain&from_date=1537264545477 -H 'Authorization: Token <token>' -H 'Content-Type: application/json' -X GET
 
     Return:\n
         HTTP/1.1 200 OK
@@ -2577,15 +2512,7 @@ class ESSuriLogTailViewSet(ESBaseViewSet):
     """
 
     def _get(self, request, format=None):
-        milli_sec = 3600 * 1000
-        chosts = request.GET.get('hosts', None)
-        from_date = int(request.GET.get('from_date', unicode(time() * 1000 - 24 * milli_sec)))
-
-        if chosts:
-            chosts = chosts.split(',')
-
-        from_date = max(int(time() * 1000 - 24 * milli_sec * 30), from_date)
-        return Response(es_suri_log_tail(from_date=from_date, hosts=chosts))
+        return Response(ESSuriLogTail(request).get())
 
 
 class ESDeleteLogsViewSet(APIView):
@@ -2608,7 +2535,7 @@ class ESDeleteLogsViewSet(APIView):
 
         try:
             es_data.es_clear()
-        except ConnectionError as e:
+        except ConnectionError:
             msg = 'Could not connect to Elasticsearch'
         except Exception as e:
             msg = 'Clearing failed: %s' % e
@@ -2655,12 +2582,17 @@ class SystemSettingsViewSet(UpdateModelMixin, RetrieveModelMixin, viewsets.Gener
         return [permission() for permission in permission_classes]
 
     def retrieve(self, request, pk=None):
+        from scirius.utils import get_middleware_module
+
         if request.user.is_superuser:
             instance = self.get_object()
             serializer = SystemSettingsSerializer(instance)
             data = serializer.data.copy()
         else:
             data = {}
+
+        extra_info = get_middleware_module('common').extra_info()
+        data.update(extra_info)
 
         data['kibana'] = USE_KIBANA
         data['evebox'] = USE_EVEBOX
@@ -2694,9 +2626,9 @@ class SystemSettingsViewSet(UpdateModelMixin, RetrieveModelMixin, viewsets.Gener
         comment_serializer.is_valid(raise_exception=True)
 
         UserAction.create(
-                action_type='system_settings',
-                comment=comment_serializer.validated_data['comment'],
-                user=request.user
+            action_type='system_settings',
+            comment=comment_serializer.validated_data['comment'],
+            user=request.user
         )
 
     def update(self, request, *args, **kwargs):
@@ -2713,6 +2645,83 @@ class SciriusContextAPIView(APIView):
         from scirius.utils import get_middleware_module
         context = get_middleware_module('common').get_homepage_context()
         return Response(context)
+
+
+class FilterSetSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FilterSet
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        try:
+            data['content'] = json.dumps(data['content'])
+        except ValueError:
+            raise serializers.ValidationError({'content': 'Not a JSON format.'})
+
+        if not data['share']:
+            data['user'] = self.context['request'].user.pk
+
+        return super(FilterSetSerializer, self).to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super(FilterSetSerializer, self).to_representation(instance)
+        data['content'] = json.loads(data['content'])
+        data['share'] = 'global' if data['user'] is None else 'private'
+        data.pop('user')
+        return data
+
+
+class FilterSetViewSet(viewsets.ModelViewSet):
+    """
+    =============================================================================================================================================================
+    ==== GET ====\n
+    Get :\n
+    Show all filter sets (even static ones that have no pk):\n
+        curl -k https://x.x.x.x/rest/rules/hunt_filter_sets/ -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X GET
+
+    Return:\n
+        HTTP/1.1 200 OK
+        [{"id":1,"content":[{"id":"alert.tag","value":{"untagged":true,"relevant":true,"informational":true}},{"negated":false,"query":"rest","id":"hits_min","value":1,"label":"Hits min: 1"},
+        {"negated":false,"query":"rest","id":"hits_max","value":10,"label":"Hits max: 10"},
+        {"value":2002025,"label":"alert.signature_id: 2002025","isChecked":true,"key":"alert.signature_id","negated":false,"query":"filter","id":"alert.signature_id"}],
+        "name":"aze","page":"RULES_LIST","share":"global"}]
+
+    ==== DELETE ====\n
+    Delete filter set (cannot delete static ones that have no pk):\n
+        curl -k https://x.x.x.x/rest/rules/hunt_filter_sets/<pk>/ -H 'Authorization: Token <token>' -H 'Content-Type: application/json'  -X DELETE
+
+    Return:\n
+        HTTP/1.1 204 No Content
+
+    =============================================================================================================================================================
+    """
+    permission_classes = (IsOwnerOrReadOnly, )
+    serializer_class = FilterSetSerializer
+    ordering = ('name',)
+
+    def get_queryset(self):
+        user = self.request.user
+        Q = models.Q
+        return FilterSet.objects.filter(Q(user=user) | Q(user=None))
+
+    def list(self, request):
+        from scirius.utils import get_middleware_module
+        filters = get_middleware_module('common').get_default_filter_sets()
+
+        queryset = self.get_queryset()
+        serializer = FilterSetSerializer(queryset, many=True)
+        return Response(serializer.data + filters)
+
+    def create(self, request, *args, **kwargs):
+        data = request.data.copy()
+
+        serializer = FilterSetSerializer(data=data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class HuntFilterAPIView(APIView):
@@ -2748,18 +2757,18 @@ def get_custom_urls():
         'get': 'retrieve',
         'put': 'update',
         'patch': 'partial_update',
-        }), name='systemsettings')
+    }), name='systemsettings')
 
     urls.append(url_)
 
     url_ = url(r'rules/hunt-filter/$', HuntFilterAPIView.as_view(), name='hunt_filter')
     urls.append(url_)
 
-    urls.append(url(r'rules/es/dashboard/$', ESDashboardViewSet.as_view(), name='es_dashboard'))
     urls.append(url(r'rules/es/rules/$', ESRulesViewSet.as_view(), name='es_rules'))
     urls.append(url(r'rules/es/rule/$', ESRuleViewSet.as_view(), name='es_rule'))
     urls.append(url(r'rules/es/filter_ip/$', ESFilterIPViewSet.as_view(), name='es_filter_ip'))
     urls.append(url(r'rules/es/field_stats/$', ESFieldStatsViewSet.as_view(), name='es_field_stats'))
+    urls.append(url(r'rules/es/fields_stats/$', ESFieldsStatsViewSet.as_view(), name='es_fields_stats'))
     urls.append(url(r'rules/es/poststats_summary/$', ESPostStatsViewSet.as_view(), name='es_poststats_summary'))
     urls.append(url(r'rules/es/sigs_list/$', ESSigsListViewSet.as_view(), name='es_sigs_list'))
     urls.append(url(r'rules/es/top_rules/$', ESTopRulesViewSet.as_view(), name='es_top_rules'))
@@ -2767,6 +2776,7 @@ def get_custom_urls():
     urls.append(url(r'rules/es/logstash_eve/$', ESLogstashEveViewSet.as_view(), name='es_logstash_eve'))
     urls.append(url(r'rules/es/health/$', ESHealthViewSet.as_view(), name='es_health'))
     urls.append(url(r'rules/es/stats/$', ESStatsViewSet.as_view(), name='es_stats'))
+    urls.append(url(r'rules/es/check_version/$', ESCheckVersionViewSet.as_view(), name='es_check_version'))
     urls.append(url(r'rules/es/indices/$', ESIndicesViewSet.as_view(), name='es_indices'))
     urls.append(url(r'rules/es/rules_per_category/$', ESRulesPerCategoryViewSet.as_view(), name='es_rules_per_category'))
     urls.append(url(r'rules/es/alerts_count/$', ESAlertsCountViewSet.as_view(), name='es_alerts_count'))
@@ -2774,6 +2784,7 @@ def get_custom_urls():
     urls.append(url(r'rules/es/ip_pair_alerts/$', ESIPPairAlertsViewSet.as_view(), name='es_ip_pair_alerts'))
     urls.append(url(r'rules/es/ip_pair_network_alerts/$', ESIPPairNetworkAlertsViewSet.as_view(), name='es_ip_pair_network_alerts'))
     urls.append(url(r'rules/es/alerts_tail/$', ESAlertsTailViewSet.as_view(), name='es_alerts_tail'))
+    urls.append(url(r'rules/es/events_from_flow_id/$', ESEventsFromFlowIDViewSet.as_view(), name='es_events_from_flow_id'))
     urls.append(url(r'rules/es/suri_log_tail/$', ESSuriLogTailViewSet.as_view(), name='es_suri_log_tail'))
     urls.append(url(r'rules/es/delete_logs/$', ESDeleteLogsViewSet.as_view(), name='es_delete_logs'))
     urls.append(url(r'rules/scirius_context/$', SciriusContextAPIView.as_view(), name='scirius_context'))
@@ -2794,3 +2805,4 @@ router.register('rules/history', UserActionViewSet)
 router.register('rules/changelog/source', ChangelogViewSet)
 router.register('rules/system_settings', SystemSettingsViewSet)
 router.register('rules/processing-filter', RuleProcessingFilterViewSet)
+router.register('rules/hunt_filter_sets', FilterSetViewSet, base_name='hunt_filter_sets')

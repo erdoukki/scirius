@@ -2,7 +2,8 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import axios from 'axios';
 import * as config from 'hunt_common/config/Api';
-import { buildQFilter } from './helpers/buildQFilter';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
 import ErrorHandler from './components/Error';
 import DonutChart from './components/DonutChart';
 
@@ -18,18 +19,15 @@ export default class HuntTrend extends React.Component {
     }
 
     componentDidUpdate(prevProps) {
-        if ((prevProps.from_date !== this.props.from_date) || (prevProps.filters !== this.props.filters)) {
+        if ((JSON.stringify(prevProps.filterParams) !== JSON.stringify(this.props.filterParams)) || (prevProps.filters !== this.props.filters)) {
             this.fetchData();
         }
     }
 
     fetchData() {
-        let stringFilters = '';
         const qfilter = buildQFilter(this.props.filters, this.props.systemSettings);
-        if (qfilter) {
-            stringFilters += `&qfilter=${qfilter.replace('&qfilter=', '&filter=')}`;
-        }
-        axios.get(`${config.API_URL}${config.ES_BASE_PATH}alerts_count/?prev=1&hosts=*&from_date=${this.props.from_date}${stringFilters}`)
+        const filterParams = buildFilterParams(this.props.filterParams);
+        axios.get(`${config.API_URL}${config.ES_BASE_PATH}alerts_count/?prev=1&hosts=*&${filterParams}${qfilter}`)
         .then((res) => {
             if (typeof (res.data) !== 'string') {
                 this.setState({ data: res.data });
@@ -94,7 +92,7 @@ export default class HuntTrend extends React.Component {
     }
 }
 HuntTrend.propTypes = {
-    from_date: PropTypes.any,
     filters: PropTypes.any,
     systemSettings: PropTypes.any,
+    filterParams: PropTypes.object.isRequired
 };

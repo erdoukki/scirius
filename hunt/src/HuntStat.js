@@ -4,7 +4,8 @@ import { DropdownKebab, MenuItem } from 'patternfly-react';
 import { Badge, ListGroup, ListGroupItem } from 'react-bootstrap';
 import axios from 'axios';
 import * as config from 'hunt_common/config/Api';
-import { buildQFilter } from './helpers/buildQFilter';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
 import EventValue from './components/EventValue';
 
 export default class HuntStat extends React.Component {
@@ -21,27 +22,25 @@ export default class HuntStat extends React.Component {
     }
 
     componentDidUpdate(prevProps) {
-        if (prevProps.from_date !== this.props.from_date) {
-            this.updateData();
-        }
-        if (JSON.stringify(prevProps.filters) !== JSON.stringify(this.props.filters)) {
+        if (JSON.stringify(prevProps.filterParams) !== JSON.stringify(this.props.filterParams) || JSON.stringify(prevProps.filters) !== JSON.stringify(this.props.filters)) {
             this.updateData();
         }
     }
 
     updateData() {
         const qfilter = buildQFilter(this.props.filters, this.props.systemSettings);
+        const filterParams = buildFilterParams(this.props.filterParams);
 
-        this.url = `${config.API_URL}${config.ES_BASE_PATH}field_stats/?field=${this.props.item}&from_date=${this.props.from_date}&page_size=30${qfilter}`;
+        this.url = `${config.API_URL}${config.ES_BASE_PATH}field_stats/?field=${this.props.item}&${filterParams}&page_size=30${qfilter}`;
 
-        axios.get(`${config.API_URL}${config.ES_BASE_PATH}field_stats/?field=${this.props.item}&from_date=${this.props.from_date}&page_size=5${qfilter}`)
+        axios.get(`${config.API_URL}${config.ES_BASE_PATH}field_stats/?field=${this.props.item}&${filterParams}&page_size=5${qfilter}`)
         .then((res) => {
             this.setState({ data: res.data });
         });
     }
 
-    addFilter(key, value, negated) {
-        this.props.addFilter(key, value, negated);
+    addFilter(id, value, negated) {
+        this.props.addFilter({ id, value, negated });
     }
 
     render() {
@@ -73,7 +72,6 @@ export default class HuntStat extends React.Component {
     }
 }
 HuntStat.propTypes = {
-    from_date: PropTypes.any,
     title: PropTypes.any,
     filters: PropTypes.any,
     col: PropTypes.any,
@@ -81,4 +79,5 @@ HuntStat.propTypes = {
     systemSettings: PropTypes.any,
     loadMore: PropTypes.func,
     addFilter: PropTypes.func,
+    filterParams: PropTypes.object.isRequired
 };

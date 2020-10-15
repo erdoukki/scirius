@@ -2,23 +2,13 @@ import React, { Component } from 'react';
 import PropTypes from 'prop-types';
 import axios from 'axios';
 import { PAGE_STATE } from 'hunt_common/constants';
-import { Dropdown, Icon, MenuItem, ApplicationLauncher, ApplicationLauncherItem, AboutModal, Modal, Form, Button } from 'patternfly-react';
+import { Dropdown, Icon, MenuItem, ApplicationLauncher, AboutModal, Modal, Form, Button } from 'patternfly-react';
 import * as config from 'hunt_common/config/Api';
-import HuntNotificationArea from '../HuntNotificationArea';
-import ExternalLink from './ExternalLink';
-import OutsideAlerter from './OutsideAlerter';
-import sciriusLogo from '../img/scirius-by-stamus.svg';
-import ErrorHandler from './Error';
-
-const USER_PERIODS = {
-    1: '1h',
-    6: '6h',
-    24: '24h',
-    48: '2d',
-    168: '7d',
-    720: '30d'
-};
-
+import FilterSets from '../../../components/FilterSets';
+import OutsideAlerter from '../../../components/OutsideAlerter';
+import sciriusLogo from '../../../img/stamus_logo.png';
+import ErrorHandler from '../../../components/Error';
+import TimeSpanItem from '../../../components/TimeSpanItem';
 
 const REFRESH_INTERVAL = {
     '': 'Off',
@@ -48,13 +38,12 @@ export default class UserNavInfo extends Component {
         this.toggleNotifications = this.toggleNotifications.bind(this);
         this.toggleiSshown = this.toggleiSshown.bind(this);
         this.isShownFalse = this.isShownFalse.bind(this);
-        this.toggleHunt = this.toggleHunt.bind(this);
-        this.toggleHome = this.toggleHome.bind(this);
-        this.toggleDashboards = this.toggleDashboards.bind(this);
-        this.toggleEvebox = this.toggleEvebox.bind(this);
         this.showUpdateThreatDetection = this.showUpdateThreatDetection.bind(this);
         this.closeShowUpdate = this.closeShowUpdate.bind(this);
         this.submitUpdate = this.submitUpdate.bind(this);
+
+        this.toggleHuntFilterSetsModal = this.toggleHuntFilterSetsModal.bind(this);
+        this.closeHuntFilterSetsModal = this.closeHuntFilterSetsModal.bind(this);
     }
 
     componentDidMount() {
@@ -86,27 +75,9 @@ export default class UserNavInfo extends Component {
     }
 
     isShownFalse() {
-        this.setState({ isShown: false });
-    }
-
-    toggleHunt() {
-        this.setState({ isShown: !this.state.isShown });
-        window.open('/rules/hunt', '_self');
-    }
-
-    toggleHome() {
-        this.setState({ isShown: !this.state.isShown });
-        window.open('/rules', '_self');
-    }
-
-    toggleDashboards() {
-        this.setState({ isShown: !this.state.isShown });
-        window.open(this.props.systemSettings.kibana_url, '_self');
-    }
-
-    toggleEvebox() {
-        this.setState({ isShown: !this.state.isShown });
-        window.open(this.props.systemSettings.evebox_url, '_self');
+        if (this.state.isShown) {
+            this.setState({ isShown: false });
+        }
     }
 
     showUpdateThreatDetection() {
@@ -126,6 +97,18 @@ export default class UserNavInfo extends Component {
         this.setState({ showUpdateModal: false });
     }
 
+    closeHuntFilterSetsModal() {
+        if (this.state.showNotifications) {
+            this.setState({ showNotifications: false });
+        }
+    }
+
+    toggleHuntFilterSetsModal() {
+        this.setState((prevState) => ({
+            showNotifications: !prevState.showNotifications
+        }));
+    }
+
     render() {
         let user = ' ...';
         if (this.state.user !== undefined) {
@@ -135,7 +118,6 @@ export default class UserNavInfo extends Component {
 
         return (
             <React.Fragment>
-
                 <li>
                     <div tabIndex={0} data-toggle="tooltip" title="Update threat detection" onClick={this.showUpdateThreatDetection} role="button" className="nav-item-iconic">
                         <Icon type="fa" name="upload" />
@@ -149,7 +131,14 @@ export default class UserNavInfo extends Component {
                     </div>
                 </li>
 
-                <Dropdown componentClass="li" id="timeinterval">
+                <li>
+                    <div tabIndex={0} data-toggle="tooltip" title="Filter Sets" onClick={(e) => { e.preventDefault(); this.toggleHuntFilterSetsModal() }} role="button" className="nav-item-iconic" style={{ paddingTop: '23px', cursor: 'pointer' }}>
+                        <i className="glyphicon glyphicon-filter" aria-hidden="true" />
+                        <span> Filter Sets</span>
+                    </div>
+                </li>
+
+                {parseInt(this.props.duration, 10) > 0 && <Dropdown componentClass="li" id="timeinterval">
                     <Dropdown.Toggle useAnchor className="nav-item-iconic">
                         <Icon type="fa" name="clock-o" /> Refresh Interval {REFRESH_INTERVAL[this.props.interval]}
                     </Dropdown.Toggle>
@@ -158,7 +147,7 @@ export default class UserNavInfo extends Component {
                             <MenuItem key={interval} onClick={() => this.props.ChangeRefreshInterval(interval)}>{REFRESH_INTERVAL[interval]}</MenuItem>
                         ), this)}
                     </Dropdown.Menu>
-                </Dropdown>
+                </Dropdown>}
 
                 <li>
                     <a tabIndex={0} id="refreshtime" role="button" className="nav-item-iconic" onClick={this.props.needReload}>
@@ -166,46 +155,57 @@ export default class UserNavInfo extends Component {
                     </a>
                 </li>
 
-                <Dropdown componentClass="li" id="time">
-                    <Dropdown.Toggle useAnchor className="nav-item-iconic">
-                        <Icon type="fa" name="clock-o" /> Last {USER_PERIODS[this.props.period]}
-                    </Dropdown.Toggle>
-                    <Dropdown.Menu>
-                        {Object.keys(USER_PERIODS).map((period) => (<MenuItem key={period} onClick={() => this.props.ChangeDuration(period)}>Last {USER_PERIODS[period]}</MenuItem>), this)}
-                    </Dropdown.Menu>
-                </Dropdown>
+                {this.props.children}
+                <TimeSpanItem />
+                {this.state.showNotifications && <ErrorHandler><FilterSets
+                    switchPage={this.props.switchPage}
+                    close={this.closeHuntFilterSetsModal}
+                    reload={this.props.needReload}
+                /></ErrorHandler>}
 
-                {this.state.showNotifications && <ErrorHandler><HuntNotificationArea /></ErrorHandler>}
                 <ErrorHandler>
                     <OutsideAlerter hide={this.isShownFalse}>
                         <ApplicationLauncher grid open={this.state.isShown} toggleLauncher={this.toggleiSshown}>
-                            <ApplicationLauncherItem
-                                icon="rebalance"
-                                title="Hunt"
-                                tooltip="Threat Hunting"
-                                onClick={this.toggleHunt}
-                            />
 
-                            <ApplicationLauncherItem
-                                icon="server"
-                                title="Administration"
-                                tooltip="Appliances Management"
-                                onClick={this.toggleHome}
-                            />
+                            <li className="applauncher-pf-item" role="presentation">
+                                <a className="applauncher-pf-link" href="/rules/hunt" role="menuitem" data-toggle="tooltip" title={'Threat Hunting'} style={{ cursor: 'pointer' }}>
 
-                            {this.props.systemSettings && this.props.systemSettings.kibana && <ExternalLink
-                                onClick={this.toggleDashboards}
-                                icon="glyphicon glyphicon-stats"
-                                title="Dashboards"
-                                tooltip="Kibana dashboards for ES"
-                            />}
+                                    <img src="/static/rules/Stamus_SEH_icon.png" height="40" width="40" alt="Hunt" />
+                                    <span className="applauncher-pf-link-title">{'Hunting'}</span>
+                                </a>
+                            </li>
 
-                            {this.props.systemSettings && this.props.systemSettings.evebox && <ExternalLink
-                                onClick={this.toggleEvebox}
-                                icon="glyphicon glyphicon-th-list"
-                                title="Events viewer"
-                                tooltip="Evebox alert and event management tool"
-                            />}
+                            <li className="applauncher-pf-item" role="presentation">
+                                <a className="applauncher-pf-link" href="/rules" role="menuitem" data-toggle="tooltip" title={'Appliances Management'} style={{ cursor: 'pointer' }}>
+
+                                    <img src="/static/rules/Stamus_SPM_icon.png" height="40" width="40" alt="Admin" />
+                                    <span className="applauncher-pf-link-title">{'Management'}</span>
+                                </a>
+                            </li>
+
+                            {process.env.REACT_APP_HAS_TAG === '1' && this.props.systemSettings && this.props.systemSettings.license && this.props.systemSettings.license.nta && <li className="applauncher-pf-item" role="presentation">
+                                <a className="applauncher-pf-link" href="/appliances/str" role="menuitem" data-toggle="tooltip" title={'Threat Radar'} style={{ cursor: 'pointer' }}>
+
+                                    <img src="/static/rules/Stamus_STR_icon.png" height="40" width="40" alt="STR" />
+                                    <span className="applauncher-pf-link-title">{'Threat Radar'}</span>
+                                </a>
+                            </li>}
+
+                            {this.props.systemSettings && this.props.systemSettings.kibana && <li className="applauncher-pf-item" role="presentation">
+                                <a className="applauncher-pf-link" href={this.props.systemSettings.kibana_url} role="menuitem" data-toggle="tooltip" title={'Kibana dashboards for ES'} style={{ color: 'inherit' }} target="_blank">
+
+                                    <i style={{ fontSize: '2.5em', paddingTop: '5px' }} className="glyphicon glyphicon-stats" aria-hidden="true"></i>
+                                    <span className="applauncher-pf-link-title" style={{ paddingTop: '5px' }}>{'Dashboards'}</span>
+                                </a>
+                            </li>}
+
+                            {this.props.systemSettings && this.props.systemSettings.evebox && <li className="applauncher-pf-item" role="presentation">
+                                <a className="applauncher-pf-link" href={this.props.systemSettings.evebox_url} role="menuitem" data-toggle="tooltip" title={'Evebox alert and event management tool'} style={{ color: 'inherit' }} target="_blank">
+
+                                    <i style={{ fontSize: '2.5em' }} className="glyphicon glyphicon-th-list" aria-hidden="true"></i>
+                                    <span className="applauncher-pf-link-title" style={{ paddingTop: '5px' }}>{'Events viewer'}</span>
+                                </a>
+                            </li>}
 
                         </ApplicationLauncher>
                     </OutsideAlerter>
@@ -215,8 +215,9 @@ export default class UserNavInfo extends Component {
                         <Icon type="pf" name="help" />
                     </Dropdown.Toggle>
                     <Dropdown.Menu>
-                        <MenuItem href={config.HUNT_DOC} target="_blank"><span className="glyphicon glyphicon-book" /> Help</MenuItem>
-                        <MenuItem onClick={this.AboutClick}><span className="glyphicon glyphicon-question-sign" /> About</MenuItem>
+                        <MenuItem href={config.HUNT_DOC} target="_blank"><span className="glyphicon glyphicon-book" /> User manual</MenuItem>
+                        <MenuItem onClick={this.AboutClick}><span className="glyphicon glyphicon-question-sign" /> About Scirius</MenuItem>
+                        <MenuItem onClick={() => window.open('https://github.com/StamusNetworks/scirius', '_blank')}><span className="glyphicon glyphicon-new-window" /> Scirius homepage</MenuItem>
                     </Dropdown.Menu>
                 </Dropdown>
 
@@ -277,8 +278,8 @@ export default class UserNavInfo extends Component {
                     onHide={this.closeModal}
                     productTitle={title}
                     logo={sciriusLogo}
-                    altLogo="SEE Logo"
-                    trademarkText="Copyright 2014-2019, Stamus Networks"
+                    altLogo="SSP Logo"
+                    trademarkText="Copyright 2014-2020, Stamus Networks"
                 >
                     <AboutModal.Versions>
                         <AboutModal.VersionItem label="Version" versionText={version} />
@@ -289,11 +290,11 @@ export default class UserNavInfo extends Component {
     }
 }
 UserNavInfo.propTypes = {
+    children: PropTypes.any,
     interval: PropTypes.any,
     systemSettings: PropTypes.any,
     needReload: PropTypes.any,
     ChangeRefreshInterval: PropTypes.any,
-    period: PropTypes.any,
     switchPage: PropTypes.any,
-    ChangeDuration: PropTypes.any,
+    duration: PropTypes.any,
 };

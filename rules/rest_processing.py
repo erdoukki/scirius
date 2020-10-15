@@ -18,16 +18,16 @@ You should have received a copy of the GNU General Public License
 along with Scirius.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from __future__ import unicode_literals
+
 import json
 from IPy import IP
 
 from django.db import models
-from rest_framework import serializers, viewsets, exceptions
+from rest_framework import serializers
 from rest_framework.decorators import list_route
 from rest_framework.response import Response
 
-from rules.models import RuleProcessingFilter, RuleProcessingFilterDef, Threshold, UserAction
+from rules.models import RuleProcessingFilter, RuleProcessingFilterDef, Threshold, UserAction, Rule
 from scirius.rest_utils import SciriusModelViewSet
 
 
@@ -38,6 +38,15 @@ class RuleProcessingFilterDefSerializer(serializers.ModelSerializer):
         model = RuleProcessingFilterDef
         fields = ('pk', 'key', 'value', 'operator', 'full_string')
         read_only_fields = ('pk',)
+
+    def to_representation(self, instance):
+        data = super(RuleProcessingFilterDefSerializer, self).to_representation(instance)
+        if instance.key == 'alert.signature_id':
+            try:
+                data['msg'] = Rule.objects.get(sid=instance.value).msg
+            except Rule.DoesNotExist:
+                pass
+        return data
 
     def validate(self, data):
         if data['key'] in self.IP_FIELDS:
@@ -71,14 +80,8 @@ class ThresholdOptionsSerializer(serializers.Serializer):
     track = serializers.ChoiceField((('by_src', 'By source'), ('by_dst', 'By destination')))
 
 
-class TagOptionsSerializer(serializers.Serializer):
-    tag = serializers.CharField(max_length=512)
-
-
 ACTION_OPTIONS_SERIALIZER = {
     'threshold': ThresholdOptionsSerializer,
-    'tag': TagOptionsSerializer,
-    'tagkeep': TagOptionsSerializer,
 }
 
 
@@ -92,14 +95,31 @@ class RuleProcessingFilterSerializer(serializers.ModelSerializer):
         model = RuleProcessingFilter
         fields = ('pk', 'filter_defs', 'action', 'options', 'rulesets', 'index', 'description', 'enabled', 'comment')
 
+    def __init__(self, *args, **kwargs):
+        super(RuleProcessingFilterSerializer, self).__init__(*args, **kwargs)
+        self.option_serializer = None
+
+        if 'context' in kwargs:
+            if 'enable_options' in kwargs['context'] and kwargs['context']['enable_options'] is False:
+                self.fields.pop('options')
+
+    def to_representation(self, instance):
+        if not instance.options:
+            from scirius.utils import get_middleware_module
+            instance = get_middleware_module('common').update_processing_filter_action_options(instance)
+        return super(RuleProcessingFilterSerializer, self).to_representation(instance)
+
     def to_internal_value(self, data):
+        from scirius.utils import get_middleware_module
+
         options = data.get('options')
         action = data.get('action')
 
-        serializer = ACTION_OPTIONS_SERIALIZER.get(action)
+        action_options_serializer = get_middleware_module('common').update_processing_filter_action_options_serializer(ACTION_OPTIONS_SERIALIZER)
+        serializer = action_options_serializer.get(action)
 
         if serializer:
-            serializer = serializer(data=options)
+            serializer = serializer(data=options, context=self.context)
             try:
                 serializer.is_valid(raise_exception=True)
             except serializers.ValidationError as e:
@@ -110,12 +130,16 @@ class RuleProcessingFilterSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({'options': ['Action "%s" does not accept options.' % action]})
             options = {}
 
-        if self.partial:
-            if 'options' in data:
+        if not isinstance(serializer, serializers.ModelSerializer):
+            if self.partial:
+                if 'options' in data:
+                    data['options'] = options
+            else:
                 data['options'] = options
         else:
-            data['options'] = options
-        
+            self.option_serializer = serializer
+            data.pop('options', None)
+
         return super(RuleProcessingFilterSerializer, self).to_internal_value(data)
 
     def validate(self, data):
@@ -184,7 +208,7 @@ class RuleProcessingFilterSerializer(serializers.ModelSerializer):
                     validated_data['index'] = 0
                 else:
                     validated_data['index'] = index_max + 1
-                    
+
             else:
                 new_index = validated_data['index']
                 if new_index != 0 and (index_max is None or new_index > index_max + 1):
@@ -192,6 +216,11 @@ class RuleProcessingFilterSerializer(serializers.ModelSerializer):
 
             instance = super(RuleProcessingFilterSerializer, self).create(validated_data)
             user_action = 'create'
+
+            if self.option_serializer and hasattr(self.option_serializer.Meta.model, 'action'):
+                self.option_serializer.save(action=instance)
+                if hasattr(self.option_serializer, 'extra_actions'):
+                    self.option_serializer.extra_actions()
         else:
             if filters is not None and len(filters) == 0:
                 # Error on empty list only
@@ -220,23 +249,28 @@ class RuleProcessingFilterSerializer(serializers.ModelSerializer):
                 raise
 
         UserAction.create(
-                action_type='%s_rule_filter' % user_action,
-                comment=comment,
-                user=self.context['request'].user,
-                rule_filter=instance
+            action_type='%s_rule_filter' % user_action,
+            comment=comment,
+            user=self.context['request'].user,
+            rule_filter=instance
         )
         return instance
 
-    update = lambda self, instance, validated_data: RuleProcessingFilterSerializer._update_or_create(self, 'update', instance, validated_data)
-    create = lambda self, validated_data: RuleProcessingFilterSerializer._update_or_create(self, 'create', None, validated_data)
+    def update(self, instance, validated_data):
+        return RuleProcessingFilterSerializer._update_or_create(self, 'update', instance, validated_data)
+
+    def create(self, validated_data):
+        return RuleProcessingFilterSerializer._update_or_create(self, 'create', None, validated_data)
 
 
 class RuleProcessingTestSerializer(serializers.Serializer):
     fields = serializers.ListField(child=serializers.CharField(max_length=256))
     action = serializers.ChoiceField((('suppress', 'Suppress'),
-                        ('threshold', 'Threshold'),
-                        ('tag', 'Tag'),
-                        ('tagkeep', 'Tag and Keep')), allow_null=True)
+                                      ('threshold', 'Threshold'),
+                                      ('tag', 'Tag'),
+                                      ('tagkeep', 'Tag and Keep'),
+                                      ('threat', 'Threat'),
+                                      ('send_mail', 'Send email')), allow_null=True)
 
 
 class RuleProcessingTestActionsSerializer(serializers.Serializer):
@@ -310,7 +344,7 @@ class RuleProcessingFilterViewSet(SciriusModelViewSet):
     serializer_class = RuleProcessingFilterSerializer
     ordering = ('index',)
     ordering_fields = ('pk', 'index', 'action', 'enabled')
-    filter_fields = ('action', 'enabled', 'filter_defs__key', 'filter_defs__value')
+    filterset_fields = ('action', 'enabled', 'filter_defs__key', 'filter_defs__value')
     search_fields = ('description', 'filter_defs__key', 'filter_defs__value')
 
     def destroy(self, request, *args, **kwargs):
@@ -319,10 +353,10 @@ class RuleProcessingFilterViewSet(SciriusModelViewSet):
         comment_serializer.is_valid(raise_exception=True)
 
         UserAction.create(
-                action_type='delete_rule_filter',
-                comment=comment_serializer.validated_data.get('comment'),
-                user=request.user,
-                rule_filter=self.get_object()
+            action_type='delete_rule_filter',
+            comment=comment_serializer.validated_data.get('comment'),
+            user=request.user,
+            rule_filter=self.get_object()
         )
 
         index = self.get_object().index
@@ -350,7 +384,6 @@ class RuleProcessingFilterViewSet(SciriusModelViewSet):
 
     @list_route(methods=['post'])
     def intersect(self, request):
-        from scirius.utils import get_middleware_module
         fields_serializer = RuleProcessingFilterIntersectSerializer(data=request.data)
         fields_serializer.is_valid(raise_exception=True)
         index = fields_serializer.validated_data.get('index', None)

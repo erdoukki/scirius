@@ -1,15 +1,17 @@
-function esEscape(str) {
+import { IP_FIELDS } from '../components/FilterList';
+
+
+export function esEscape(str) {
     // https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html#_reserved_characters
     // Can't search on < >
     str = str.replace(/[<>]/g, '');
 
     // Escape other reserved characters
-    return str.replace(/[+-=&|!(){}[\]^"~:\\/]/g, (c) => `\\${c}`);
+    return str.replace(/[=+\-&|!(){}[\]^"~:\\/]/g, (c) => `\\${c}`);
 }
 
 export function buildQFilter(filters, systemSettings) {
     const qfilter = [];
-    let output = '';
     let fSuffix = '.raw';
 
     if (systemSettings) {
@@ -31,7 +33,9 @@ export function buildQFilter(filters, systemSettings) {
             } else if (filters[i].id === 'alert.signature_id') {
                 qfilter.push(`${fPrefix}alert.signature_id:${filters[i].value}`);
             } else if (filters[i].id === 'ip') {
-                qfilter.push(`"${filters[i].value}"`);
+                qfilter.push(`${fPrefix}(src_ip:"${filters[i].value}" OR dest_ip:"${filters[i].value}")`);
+            } else if (IP_FIELDS.includes(filters[i].id)) {
+                qfilter.push(`${fPrefix}${filters[i].id}:"${filters[i].value}"`);
             } else if (filters[i].id === 'alert.tag') {
                 const tagFilters = [];
                 if (filters[i].value.untagged === true) {
@@ -50,28 +54,26 @@ export function buildQFilter(filters, systemSettings) {
                 }
             } else if (filters[i].id === 'msg') {
                 qfilter.push(`${fPrefix}alert.signature:"${filters[i].value}"`);
+            } else if (filters[i].id === 'es_filter') {
+                qfilter.push(`${fPrefix}(${filters[i].value})`);
+            } else if (filters[i].id === 'port') {
+                qfilter.push(`${fPrefix}(src_port:${filters[i].value} OR dest_port:${filters[i].value})`);
             } else if (filters[i].id === 'alert.category' && filters[i].value === 'Unknown') {
                 qfilter.push(`${fPrefix}alert.category${fSuffix}:""`);
             } else if (filters[i].id === 'not_in_msg') {
                 qfilter.push(`${fPrefix}NOT alert.signature:"${filters[i].value}"`);
             } else if (typeof filters[i].value === 'string') {
                 if (filters[i].fullString) {
-                    const value = filters[i].value.replace(/\\/g, '\\\\');
-                    qfilter.push(`${fPrefix}${filters[i].id}${fSuffix}:"${encodeURIComponent(value)}"`);
+                    const value = filters[i].value.toString().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                    qfilter.push(`${fPrefix}${filters[i].id}${fSuffix}:"${value}"`);
                 } else {
-                    const value = esEscape(filters[i].value);
-                    qfilter.push(`${fPrefix}${filters[i].id}:${encodeURIComponent(value)}`);
+                    const value = esEscape(filters[i].value.toString());
+                    qfilter.push(`${fPrefix}${filters[i].id}:${value}`);
                 }
             } else {
                 qfilter.push(`${fPrefix}${filters[i].id}:${filters[i].value}`);
             }
         }
     }
-
-    if (qfilter.length === 0) {
-        return null;
-    }
-
-    output += (qfilter.length) ? `&qfilter=${qfilter.join(' AND ')}` : '';
-    return (output.length) ? output : null;
+    return qfilter.length ? `&qfilter=${encodeURIComponent(qfilter.join(' AND '))}` : '';
 }

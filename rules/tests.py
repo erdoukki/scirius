@@ -18,41 +18,45 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Scirius.  If not, see <http://www.gnu.org/licenses/>.
 """
-from __future__ import unicode_literals
+
 import json
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test import TestCase
 from django.utils import timezone
+from django.http import HttpRequest
+from django.db import models
 from rest_framework import status, mixins
 from rest_framework.test import APITestCase
 
-from models import Category, Rule, Ruleset, Source, SourceAtVersion, Transformation, RuleTransformation, \
+from .models import Category, Rule, Ruleset, Source, SourceAtVersion, Transformation, RuleTransformation, \
     RulesetTransformation, SourceUpdate, SystemSettings, UserAction, RuleProcessingFilter, RuleProcessingFilterDef
-from rest_api import router
+from .rest_api import router
 
 from copy import deepcopy
 import tempfile
 from shutil import rmtree
-from StringIO import StringIO
+from io import StringIO
 import itertools
 from importlib import import_module
 
 
-ET_URL = 'https://rules.emergingthreats.net/open/suricata-2.0.1/emerging.rules.tar.gz'
+ET_URL = 'https://rules.emergingthreats.net/open/suricata-4.0/emerging.rules.tar.gz'
 
-RULE_CONTENT = 'alert ip any any -> any any (msg:"Unicode test rule éàç"; content:"uid=0|28|root|29|"; classtype:bad-unknown; sid:2100498; rev:7; metadata:created_at 2010_09_23, updated_at 2010_09_23;)\n'
+RULE_CONTENT = 'alert ip any any -> any any (msg:"Unicode test rule éàç"; content:"uid=0|28|root|29|"; classtype:bad-unknown; sid:2100498; rev:7; metadata:created_at 2010_09_23, updated_at 2010_09_23;)\n'  # ignore_utf8_check: 233 224 231
 
 
 class SourceCreationTestCase(TestCase):
     def setUp(self):
         self.tmpdirname = tempfile.mkdtemp()
         with self.settings(GIT_SOURCES_BASE_DIRECTORY=self.tmpdirname):
-            self.source = Source.objects.create(name="ET Open",
-                                       method = "http",
-                                       datatype = "sigs",
-                                       uri=ET_URL,
-                                       created_date=timezone.now())
+            self.source = Source.objects.create(
+                name="ET Open",
+                method="http",
+                datatype="sigs",
+                uri=ET_URL,
+                created_date=timezone.now()
+            )
 
     def tearDown(self):
         rmtree(self.tmpdirname)
@@ -60,20 +64,23 @@ class SourceCreationTestCase(TestCase):
     def test_source_update(self):
         """Test source update"""
         self.source.update()
-        self.assertEqual(len(SourceAtVersion.objects.filter(source = self.source)), 1)
-        self.assertNotEqual(len(Category.objects.filter(source = self.source)), 0)
+        self.assertEqual(len(SourceAtVersion.objects.filter(source=self.source)), 1)
+        self.assertNotEqual(len(Category.objects.filter(source=self.source)), 0)
 
     def test_unicode_rule(self):
-        source = Source.objects.create(name="Unicode rule",
-                                   method = "local",
-                                   datatype = "sig",
-                                   created_date=timezone.now())
+        source = Source.objects.create(
+            name="Unicode rule",
+            method="local",
+            datatype="sig",
+            created_date=timezone.now()
+        )
 
         f = tempfile.NamedTemporaryFile(dir=self.tmpdirname)
         f.write(RULE_CONTENT.encode('utf-8'))
         f.seek(0)
         source.handle_rules_file(f)
         self.assertEqual(Rule.objects.count(), 1)
+
 
 class TransformationTestCase(TestCase):
     def setUp(self):
@@ -163,7 +170,7 @@ deployment Datacenter, tag Metasploit, signature_severity Critical, created_at 2
 
     def test_002_lateral_yes(self):
         content = self.rule_lateral_yes.apply_lateral_target_transfo(self.rule_lateral_yes.content, key=Transformation.LATERAL, value=Transformation.L_YES)
-        self.assertEqual('alert tcp any any' in content, True)
+        self.assertIn('alert tcp any any', content)
 
     def test_003_lateral_auto(self):
         # ET POLICY disbale transformation
@@ -172,12 +179,12 @@ deployment Datacenter, tag Metasploit, signature_severity Critical, created_at 2
 
         # deployment Interna enable Transformation
         content = self.rule_lateral_auto_transfo.apply_lateral_target_transfo(self.rule_lateral_auto_transfo.content, Transformation.LATERAL, Transformation.L_AUTO)
-        self.assertEqual('alert tcp any any' in content, True)
+        self.assertIn('alert tcp any any', content)
 
     def test_004_target_auto(self):
         # attack_target enable transformation
         content = self.rule_target_auto_transfo.apply_lateral_target_transfo(self.rule_target_auto_transfo.content, Transformation.TARGET, Transformation.T_AUTO)
-        self.assertEqual(content.endswith('target:dest_ip;)'), True)
+        self.assertTrue(content.endswith('target:dest_ip;)'))
 
         # attack_target enable transformation
         # but not-suspicious disable it
@@ -187,12 +194,12 @@ deployment Datacenter, tag Metasploit, signature_severity Critical, created_at 2
     def test_005_target_source(self):
         # attack_target enable transformation
         content = self.rule_target_source_transfo.apply_lateral_target_transfo(self.rule_target_source_transfo.content, Transformation.TARGET, Transformation.T_SOURCE)
-        self.assertEqual(content.endswith('target:src_ip;)'), True)
+        self.assertTrue(content.endswith('target:src_ip;)'))
 
     def test_005_target_destination(self):
         # attack_target enable transformation
         content = self.rule_target_destination_transfo.apply_lateral_target_transfo(self.rule_target_destination_transfo.content, Transformation.TARGET, Transformation.T_DESTINATION)
-        self.assertEqual(content.endswith('target:dest_ip;)'), True)
+        self.assertTrue(content.endswith('target:dest_ip;)'))
 
 
 class RestAPITestBase(object):
@@ -216,7 +223,7 @@ class RestAPITestBase(object):
 
         # behavior/status could be different on remote and local build
         try:
-            data_msg = unicode(getattr(response, 'data', None))
+            data_msg = str(getattr(response, 'data', None))
         except UnicodeDecodeError:
             data_msg = repr(getattr(response, 'data', None))
         msg = 'Request failed: \n%s %s\n%s %s\n%s' % (method.upper(), url, response.status_code, response.reason_phrase, data_msg)
@@ -229,12 +236,23 @@ class RestAPITestBase(object):
 
         return getattr(response, 'data', None)
 
-    http_get = lambda self, *args, **kwargs: self._make_request('get', *args, **kwargs)
-    http_post = lambda self, *args, **kwargs: self._make_request('post', *args, **kwargs)
-    http_put = lambda self, *args, **kwargs: self._make_request('put', *args, **kwargs)
-    http_patch = lambda self, *args, **kwargs: self._make_request('patch', *args, **kwargs)
-    http_delete = lambda self, *args, **kwargs: self._make_request('delete', *args, **kwargs)
-    http_options = lambda self, *args, **kwargs: self._make_request('options', *args, **kwargs)
+    def http_get(self, *args, **kwargs):
+        return self._make_request('get', *args, **kwargs)
+
+    def http_post(self, *args, **kwargs):
+        return self._make_request('post', *args, **kwargs)
+
+    def http_put(self, *args, **kwargs):
+        return self._make_request('put', *args, **kwargs)
+
+    def http_patch(self, *args, **kwargs):
+        return self._make_request('patch', *args, **kwargs)
+
+    def http_delete(self, *args, **kwargs):
+        return self._make_request('delete', *args, **kwargs)
+
+    def http_options(self, *args, **kwargs):
+        return self._make_request('options', *args, **kwargs)
 
 
 class RestAPISourceTestCase(RestAPITestBase, APITestCase):
@@ -247,10 +265,10 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
 
     def _create_public_source(self):
         params = {
-                'name': 'sonic test public source',
-                'comment': 'MyPublicComment',
-                'public_source': 'oisf/trafficid',
-                }
+            'name': 'sonic test public source',
+            'comment': 'MyPublicComment',
+            'public_source': 'oisf/trafficid',
+        }
         self.http_post(reverse('publicsource-list'), params, status=status.HTTP_201_CREATED)
         sources = Source.objects.filter(name='sonic test public source')
         self.assertEqual(len(sources) == 1, True)
@@ -268,7 +286,7 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
             'name': 'sonic test custom source',
             'comment': 'MyCustomComment',
             'method': method,
-            'datatype':  datatype
+            'datatype': datatype
         }
         params.update(kwargs)
         self.http_post(reverse('source-list'), params, status=status.HTTP_201_CREATED)
@@ -284,7 +302,7 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
         self.ruleset.sources.add(sources_at_version[0])
 
     def _set_source_from_name(self, name):
-        sources = Source.objects.filter(name='sonic test custom source')
+        sources = Source.objects.filter(name=name)
         self.assertEqual(len(sources), 1)
         self.source = sources[0]
 
@@ -306,7 +324,7 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
         for rule in rules:
             self.assertIn('group', rule.msg)
 
-        response = self.http_patch(reverse('source-detail', args=(self.source.pk,)), {'use_iprep': True})
+        response = self.http_patch(reverse('source-detail', args=(self.source.pk,)), {'use_iprep': True, 'version': 1})
         self.assertEqual(response['use_iprep'], True)
 
         self._set_source_from_name('sonic test custom source')
@@ -316,7 +334,7 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
         self.assertEqual(len(rules), 1)
         self.assertIn('iprep', rules[0].content)
 
-        response = self.http_patch(reverse('source-detail', args=(self.source.pk,)), {'use_iprep': False})
+        response = self.http_patch(reverse('source-detail', args=(self.source.pk,)), {'use_iprep': False, 'version': 1})
         self.assertEqual(response['use_iprep'], False)
 
         self._set_source_from_name('sonic test custom source')
@@ -369,7 +387,7 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
 
         self.assertDictContainsSubset({
             'sid': 2100498,
-            'msg': 'Unicode test rule éàç',
+            'msg': 'Unicode test rule éàç',  # ignore_utf8_check: 233 224 231
             'state': True,
             'state_in_source': True,
             'content': RULE_CONTENT,
@@ -397,8 +415,8 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
         self._create_custom_source('http', 'sigs', uri='http://localhost:1234/')
 
         response = self.http_post(reverse('source-update-source', args=(self.source.pk,)), status=status.HTTP_400_BAD_REQUEST)
-        msg = unicode(response.get('update', [''])[0])
-        self.assertRegexpMatches(msg, 'Can not fetch data: .* Connection refused')
+        msg = str(response.get('update', [''])[0])
+        self.assertRegex(msg, 'Can not fetch data: .* Connection refused')
 
     def test_006_custom_source_delete(self):
         self._create_custom_source('local', 'sig')
@@ -411,7 +429,7 @@ class RestAPISourceTestCase(RestAPITestBase, APITestCase):
     def test_007_source_name_unicode(self):
         self._create_public_source()
 
-        unic = 'é&"_è-àç'
+        unic = 'é&"_è-àç'  # ignore_utf8_check: 233 232 231 224
         response = self.http_patch(reverse('publicsource-detail', args=(self.public_source.pk,)), {'name': unic})
         self.assertEqual(response['name'], unic)
 
@@ -687,7 +705,7 @@ class RestAPIRulesetTestCase(RestAPITestBase, APITestCase):
         self.assertEqual(len(ruleset.categories.all()), len(ruleset_copy.categories.all()))
 
     def test_009_ruleset_name_unicode(self):
-        name = "Rulesetàççé'-(è&_èç&àç\"ééè-"
+        name = "Rulesetàççé'-(è&_èç&àç\"ééè-"  # ignore_utf8_check: 224 231 233 232
         params = {"name": name,
                   "comment": "My custom ruleset comment",
                   "sources": [self.source.pk, self.source2.pk],
@@ -703,13 +721,20 @@ class RestAPIRuleTestCase(RestAPITestBase, APITestCase):
         RestAPITestBase.setUp(self)
         APITestCase.setUp(self)
 
-        self.source = Source.objects.create(name='test source', created_date=timezone.now(),
-                method='local', datatype='sig')
+        self.source = Source.objects.create(
+            name='test source',
+            created_date=timezone.now(),
+            method='local',
+            datatype='sig'
+        )
         self.source.save()
         self.source_at_version = SourceAtVersion.objects.create(source=self.source, version='42')
         self.source_at_version.save()
-        self.category = Category.objects.create(name='test category', filename='test',
-                source=self.source)
+        self.category = Category.objects.create(
+            name='test category',
+            filename='test',
+            source=self.source
+        )
         self.category.save()
 
         content = 'alert ip $HOME_NET any -> [103.207.29.161,103.207.29.171,103.225.168.222,103.234.36.190,103.234.37.4,103.4.164.34, \
@@ -720,11 +745,19 @@ reference:url,doc.emergingthreats.net/bin/view/Main/BotCC; reference:url,www.sha
 threshold: type limit, track by_src, seconds 3600, count 1; flowbits:set,ET.Evil; \
 flowbits:set,ET.BotccIP; classtype:trojan-activity; sid:2404000; rev:4933;)'
 
-        self.rule = Rule.objects.create(sid=1, category=self.category, msg='test rule',
-                content=content)
+        self.rule = Rule.objects.create(
+            sid=1,
+            category=self.category,
+            msg='test rule',
+            content=content
+        )
         self.rule.save()
-        self.ruleset = Ruleset.objects.create(name='test ruleset', descr='descr', created_date=timezone.now(),
-                updated_date=timezone.now())
+        self.ruleset = Ruleset.objects.create(
+            name='test ruleset',
+            descr='descr',
+            created_date=timezone.now(),
+            updated_date=timezone.now()
+        )
         self.ruleset.save()
         self.ruleset.sources.add(self.source_at_version)
         self.ruleset.categories.add(self.category)
@@ -750,8 +783,11 @@ flowbits:set,ET.BotccIP; classtype:trojan-activity; sid:2404000; rev:4933;)'
         self.client.logout()
 
         # Non logged request are rejected
-        self.http_post(reverse('rule-disable', args=(self.rule.pk,)), {'ruleset': self.ruleset.pk},
-                status=status.HTTP_403_FORBIDDEN)
+        self.http_post(
+            reverse('rule-disable', args=(self.rule.pk,)),
+            {'ruleset': self.ruleset.pk},
+            status=status.HTTP_403_FORBIDDEN
+        )
 
         # Post not authorized non-staff
         self.user.is_superuser = False
@@ -759,8 +795,11 @@ flowbits:set,ET.BotccIP; classtype:trojan-activity; sid:2404000; rev:4933;)'
         self.user.save()
         self.client.force_login(self.user)
         # Read still authorized
-        self.http_post(reverse('rule-disable', args=(self.rule.pk,)), {'ruleset': self.ruleset.pk},
-                status=status.HTTP_403_FORBIDDEN)
+        self.http_post(
+            reverse('rule-disable', args=(self.rule.pk,)),
+            {'ruleset': self.ruleset.pk},
+            status=status.HTTP_403_FORBIDDEN
+        )
 
     def test_004_rule_transformation(self):
         # Transform ruleset
@@ -810,7 +849,7 @@ flowbits:set,ET.BotccIP; classtype:trojan-activity; sid:2404000; rev:4933;)'
 
         # Transform same rule
         self.ruletransformation = RuleTransformation.objects.filter(rule_transformation=self.rule, ruleset=self.ruleset)
-        self.http_patch(reverse('ruletransformation-detail',  args=(self.ruletransformation[0].pk,)),
+        self.http_patch(reverse('ruletransformation-detail', args=(self.ruletransformation[0].pk,)),
                         {'rule': self.rule.pk, 'ruleset': self.ruleset.pk,
                             'transfo_type': Transformation.ACTION.value,
                             'transfo_value': Transformation.A_DROP.value})
@@ -936,13 +975,20 @@ class RestAPIRuleProcessingFilterTestCase(RestAPITestBase, APITestCase):
         import scirius.utils
         self.middleware = scirius.utils.get_middleware_module
 
-        self.source = Source.objects.create(name='test source', created_date=timezone.now(),
-                method='local', datatype='sig')
+        self.source = Source.objects.create(
+            name='test source',
+            created_date=timezone.now(),
+            method='local',
+            datatype='sig'
+        )
         self.source.save()
         self.source_at_version = SourceAtVersion.objects.create(source=self.source, version='42')
         self.source_at_version.save()
-        self.category = Category.objects.create(name='test category', filename='test',
-                source=self.source)
+        self.category = Category.objects.create(
+            name='test category',
+            filename='test',
+            source=self.source
+        )
         self.category.save()
 
         content = 'alert ip $HOME_NET any -> [103.207.29.161,103.207.29.171,103.225.168.222,103.234.36.190,103.234.37.4,103.4.164.34, \
@@ -963,20 +1009,40 @@ flow:established,to_server; content:"|00|"; depth:1; content:"|FF|SMB2"; within:
 within:2; distance:56; flowbits:set,smb.trans2; flowbits:noalert; classtype:protocol-command-decode; sid:2103141; \
 rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
 
-        self.rule = Rule.objects.create(sid=1, category=self.category, msg='test rule',
-                content=content)
+        self.rule = Rule.objects.create(
+            sid=1,
+            category=self.category,
+            msg='test rule',
+            content=content
+        )
         self.rule.save()
-        self.rule2 = Rule.objects.create(sid=2, category=self.category, msg='whatever DNS Query for whatever',
-                content=content)
+        self.rule2 = Rule.objects.create(
+            sid=2,
+            category=self.category,
+            msg='whatever DNS Query for whatever',
+            content=content
+        )
         self.rule2.save()
-        self.rule3 = Rule.objects.create(sid=3, category=self.category, msg='other content DNS Query for another content',
-                content=content2)
+        self.rule3 = Rule.objects.create(
+            sid=3,
+            category=self.category,
+            msg='other content DNS Query for another content',
+            content=content2
+        )
         self.rule3.save()
-        self.rule4 = Rule.objects.create(sid=4, category=self.category, msg='other content DNS Query for another content',
-                content=content3)
+        self.rule4 = Rule.objects.create(
+            sid=4,
+            category=self.category,
+            msg='other content DNS Query for another content',
+            content=content3
+        )
         self.rule4.save()
-        self.ruleset = Ruleset.objects.create(name='test ruleset', descr='descr', created_date=timezone.now(),
-                updated_date=timezone.now())
+        self.ruleset = Ruleset.objects.create(
+            name='test ruleset',
+            descr='descr',
+            created_date=timezone.now(),
+            updated_date=timezone.now()
+        )
         self.ruleset.save()
         self.ruleset.sources.add(self.source_at_version)
         self.ruleset.categories.add(self.category)
@@ -1003,7 +1069,6 @@ rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
             'index': 0,
             'rulesets': [self.ruleset.pk]
         }
-
 
     def tearDown(self):
         import scirius.utils
@@ -1158,7 +1223,7 @@ rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
         order = [f['pk'] for f in r['results']]
         self.assertListEqual(expected, order)
         indices = [f['index'] for f in r['results']]
-        self.assertListEqual(indices, range(4))
+        self.assertListEqual(indices, list(range(4)))
 
     def _test_010_order_update(self, prev_index, new_index):
         filters = []
@@ -1247,18 +1312,7 @@ rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
             'action': 'threshold',
             'options': {}
         }, status=status.HTTP_400_BAD_REQUEST)
-        self.assertDictEqual(r, {'options': [{'type': ['This field is required.'],
-            'track': ['This field is required.']}]})
-
-    def test_018_suri_tag_create_invalid(self):
-        self._force_suricata_middleware()
-        r = self.http_post(self.list_url, {
-            'filter_defs': [{'key': 'src_ip', 'value': '192.168.0.1', 'operator': 'equal', 'full_string': True}],
-            'action': 'tag',
-            'options': {'tag': 'test'},
-            'rulesets': [self.ruleset.pk]
-        }, status=status.HTTP_400_BAD_REQUEST)
-        self.assertDictEqual(r, {'non_field_errors': ['Action "tag" is not supported.']})
+        self.assertDictEqual(r, {'options': [{'type': ['This field is required.'], 'track': ['This field is required.']}]})
 
     def test_019_suri_filter_defs_invalid(self):
         self._force_suricata_middleware()
@@ -1271,8 +1325,10 @@ rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
 
     def test_020_suri_suppress_generate(self):
         self.http_post(self.list_url, {
-            'filter_defs': [{'key': 'src_ip', 'value': '192.168.0.1', 'operator': 'equal'},
-                {'key': 'alert.signature_id', 'value': '1', 'operator': 'equal'}],
+            'filter_defs': [
+                {'key': 'src_ip', 'value': '192.168.0.1', 'operator': 'equal'},
+                {'key': 'alert.signature_id', 'value': '1', 'operator': 'equal'}
+            ],
             'action': 'suppress',
             'rulesets': [self.ruleset.pk]
         }, status=status.HTTP_201_CREATED)
@@ -1283,8 +1339,10 @@ rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
 
     def test_021_suri_threshold_generate(self):
         self.http_post(self.list_url, {
-            'filter_defs': [{'key': 'dest_ip', 'value': '192.168.0.1', 'operator': 'equal', 'full_string': True},
-                {'key': 'alert.signature_id', 'value': '1', 'operator': 'equal', 'full_string': True}],
+            'filter_defs': [
+                {'key': 'dest_ip', 'value': '192.168.0.1', 'operator': 'equal', 'full_string': True},
+                {'key': 'alert.signature_id', 'value': '1', 'operator': 'equal', 'full_string': True}
+            ],
             'action': 'threshold',
             'options': {'type': 'both', 'track': 'by_dst'},
             'rulesets': [self.ruleset.pk]
@@ -1321,21 +1379,25 @@ rev:5; metadata:created_at 2010_09_23, updated_at 2010_09_23; target:src_ip;)'
     def test_124_srcip_msg_validation(self):
         self._force_suricata_middleware()
         self.http_post(self.list_url, {
-            'filter_defs': [{'key': 'src_ip', 'value': '192.168.0.1', 'operator': 'equal'},
-                {'key': 'msg', 'value': 'DNS Query for', 'operator': 'equal'}],
+            'filter_defs': [
+                {'key': 'src_ip', 'value': '192.168.0.1', 'operator': 'equal'},
+                {'key': 'msg', 'value': 'DNS Query for', 'operator': 'equal'}
+            ],
             'action': 'suppress',
             'rulesets': [self.ruleset.pk]
         }, status=status.HTTP_201_CREATED)
 
         f = RuleProcessingFilter.objects.all()[0]
         suppress = f.get_threshold_content(self.ruleset)
-        self.assertEqual(suppress, ['suppress gen_id 1, sid_id 3, track by_src, ip 192.168.0.1\n', 'suppress gen_id 1, sid_id 2, track by_src, ip 192.168.0.1\n', 'suppress gen_id 1, sid_id 4, track by_src, ip 192.168.0.1\n'])
+        self.assertEqual(suppress, ['suppress gen_id 1, sid_id 2, track by_src, ip 192.168.0.1\n', 'suppress gen_id 1, sid_id 3, track by_src, ip 192.168.0.1\n', 'suppress gen_id 1, sid_id 4, track by_src, ip 192.168.0.1\n'])
 
     def test_125_target_src_msg_validation(self):
         self._force_suricata_middleware()
         self.http_post(self.list_url, {
-            'filter_defs': [{'key': 'alert.target.ip', 'value': '192.168.0.1', 'operator': 'equal'},
-                {'key': 'msg', 'value': 'another content', 'operator': 'equal'}],
+            'filter_defs': [
+                {'key': 'alert.target.ip', 'value': '192.168.0.1', 'operator': 'equal'},
+                {'key': 'msg', 'value': 'another content', 'operator': 'equal'}
+            ],
             'action': 'suppress',
             'rulesets': [self.ruleset.pk]
         }, status=status.HTTP_201_CREATED)
@@ -1412,7 +1474,7 @@ def order_update_lambda(a, b):
     return lambda x: RestAPIRuleProcessingFilterTestCase._test_010_order_update(x, a, b)
 
 
-for a, b in itertools.product(range(4), range(5) + [None]):
+for a, b in itertools.product(list(range(4)), list(range(5)) + [None]):
     setattr(RestAPIRuleProcessingFilterTestCase, 'test_010_order_update_%i_to_%s' % (a, repr(b)), order_update_lambda(a, b))
 
 
@@ -1426,7 +1488,12 @@ class RestAPIListTestCase(RestAPITestBase, APITestCase):
         # Ordering must be set to prevent:
         # /usr/share/python/scirius-pro/local/lib/python2.7/site-packages/rest_framework/pagination.py:208: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'rules.models.RuleTransformation'> QuerySet
         for url, viewset, view_name in self.router.registry:
-            if viewset().get_queryset().ordered or not issubclass(viewset, mixins.ListModelMixin):
+            # Need to instanciate request and user because of FilterSetViewSet::get_queryset override that uses self.request.user
+            v = viewset()
+            v.request = HttpRequest()
+            v.request.user = None
+
+            if v.get_queryset().ordered or not issubclass(viewset, mixins.ListModelMixin):
                 continue
             ERR = 'Viewset "%s" must set an "ordering" attribute or have an ordered queryset' % viewset.__name__
             self.assertTrue(hasattr(viewset, 'ordering'), ERR)
@@ -1446,10 +1513,28 @@ class RestAPIListTestCase(RestAPITestBase, APITestCase):
 
     def test_004_list_filter(self):
         for url, viewset, view_name in self.router.registry:
-            if not hasattr(viewset, 'filter_fields'):
+            v = viewset()
+            v.request = HttpRequest()
+            v.request.user = None
+
+            if not hasattr(viewset, 'filterset_fields'):
                 continue
-            for field in viewset.filter_fields:
-                self.http_get(reverse(view_name + '-list') + '?%s=0' % field)
+
+            for field in viewset.filterset_fields:
+                if '__' in field:
+                    continue
+
+                member = v.get_queryset().model._meta.get_field(field)
+                if isinstance(member, models.ForeignKey):
+                    continue
+
+                param = '0'
+                if isinstance(member, models.DateTimeField):
+                    param = timezone.now().strftime('%s')
+                elif member.choices is not None and len(member.choices) > 0:
+                    param = member.choices[0][0]
+
+                self.http_get(reverse(view_name + '-list') + '?%s=%s' % (field, param))
 
     def test_005_list_search(self):
         for url, viewset, view_name in self.router.registry:
@@ -1469,10 +1554,10 @@ class RestAPIChangelogTestCase(RestAPITestBase, APITestCase):
         self.ruleset.save()
 
         params = {
-                'name': 'sonic test public source',
-                'comment': 'MyPublicComment',
-                'public_source': 'oisf/trafficid',
-                }
+            'name': 'sonic test public source',
+            'comment': 'MyPublicComment',
+            'public_source': 'oisf/trafficid',
+        }
         self.http_post(reverse('publicsource-list'), params, status=status.HTTP_201_CREATED)
         sources = Source.objects.filter(name='sonic test public source')
         self.assertEqual(len(sources) == 1, True)
@@ -1521,12 +1606,26 @@ class RestAPISystemSettingsTestCase(RestAPITestBase, APITestCase):
         self.assertEqual('use_elasticsearch' in content, True)
 
     def test_002_system_settings_update(self):
-        params = {'use_http_proxy': True, 'http_proxy': '', 'https_proxy': '', 'use_elasticsearch': True, 'custom_elasticsearch': False, 'elasticsearch_url': 'http://elasticsearch:9200/'}
+        params = {
+            'use_http_proxy': True,
+            'http_proxy': '',
+            'https_proxy': '',
+            'use_elasticsearch': True,
+            'custom_elasticsearch': False,
+            'elasticsearch_url': 'http://elasticsearch:9200/'
+        }
         content = self.http_patch(reverse('systemsettings'), params)
         self.assertEqual(content['use_http_proxy'], True)
         self.assertEqual(content['use_elasticsearch'], True)
 
-        params = {'use_http_proxy': False, 'http_proxy': '', 'https_proxy': '', 'use_elasticsearch': False, 'custom_elasticsearch': False, 'elasticsearch_url': 'http://elasticsearch:9200/'}
+        params = {
+            'use_http_proxy': False,
+            'http_proxy': '',
+            'https_proxy': '',
+            'use_elasticsearch': False,
+            'custom_elasticsearch': False,
+            'elasticsearch_url': 'http://elasticsearch:9200/'
+        }
         content = self.http_put(reverse('systemsettings'), params)
         self.assertEqual(content['use_http_proxy'], False)
         self.assertEqual(content['use_elasticsearch'], False)

@@ -62,9 +62,9 @@ $( 'document' ).ready(function() {
 
 
 function load_rules(from_date, hosts, filter, callback) {
-    var tgturl = "/rules/es?query=rules&host=" + hosts.join() + "&from_date=" + from_date;
+    var tgturl = "/rules/es?query=rules&hosts=" + hosts.join() + "&from_date=" + from_date;
     if (filter != null) {
-       tgturl = tgturl + "&filter=" + filter;
+       tgturl = tgturl + "&qfilter=" + filter;
     }
     $.ajax({
        url: tgturl,
@@ -96,7 +96,7 @@ function draw_timeline(from_date, hosts, filter, ylegend=undefined) {
 
         var esurl = "/rest/rules/es/timeline/?from_date=" + from_date + "&hosts=" + hosts.join()
         if (filter) {
-            esurl = esurl + "&filter=" + filter;
+            esurl = esurl + "&qfilter=" + filter;
         }
         $.ajax(
                         {
@@ -343,15 +343,15 @@ window.build_path = build_path;
 function draw_sunburst(from_date, hosts, filter, callback) {
         var esurl = "/rest/rules/es/rules_per_category/?from_date=" + from_date + "&hosts=" + hosts.join()
         if (filter) {
-            esurl = esurl + "&filter=" + filter;
+            esurl = esurl + "&qfilter=" + filter;
         }
         $.ajax(
          {
          type:"GET",
          url:esurl,
          success: function(data) {
-         if (!data) {
-              $("#circles").append("No data to build the graph");
+         if (!data || Object.keys(data).length === 0) {
+              $("#circles").text("No data to build the graph");
               return;
          }
 var height = 300;
@@ -493,7 +493,7 @@ window.draw_sunburst = draw_sunburst;
 function draw_circle(from_date, hosts, filter, callback) {
         var esurl = "/rest/rules/es/rules_per_category/?from_date=" + from_date + "&hosts=" + hosts.join()
         if (filter) {
-            esurl = esurl + "&filter=" + filter;
+            esurl = esurl + "&qfilter=" + filter;
         }
         $.ajax(
          {

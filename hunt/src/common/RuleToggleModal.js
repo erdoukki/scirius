@@ -3,7 +3,10 @@ import PropTypes from 'prop-types';
 import axios from 'axios';
 import { Modal, Button, Checkbox, Col, Form, FormControl, FormGroup, Icon } from 'patternfly-react';
 import * as config from 'hunt_common/config/Api';
-import HuntRestError from './components/HuntRestError';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
+import { supportedActions, setDefaultOptions } from 'hunt_common/supportedActions';
+import HuntRestError from '../components/HuntRestError';
 
 export default class RuleToggleModal extends React.Component {
     constructor(props) {
@@ -13,7 +16,8 @@ export default class RuleToggleModal extends React.Component {
             supported_filters: [],
             comment: '',
             options: {},
-            errors: undefined
+            errors: undefined,
+            submitting: false
         };
         this.submit = this.submit.bind(this);
         this.close = this.close.bind(this);
@@ -22,7 +26,7 @@ export default class RuleToggleModal extends React.Component {
         this.handleFieldChange = this.handleFieldChange.bind(this);
         this.handleOptionsChange = this.handleOptionsChange.bind(this);
         this.updateActionDialog = this.updateActionDialog.bind(this);
-        this.setDefaultOptions = this.setDefaultOptions.bind(this);
+        this.setDefaultOptions = setDefaultOptions.bind(this);
         this.onFieldKeyPress = this.onFieldKeyPress.bind(this);
         this.toggleFilter = this.toggleFilter.bind(this);
     }
@@ -110,11 +114,13 @@ export default class RuleToggleModal extends React.Component {
     }
 
     close() {
-        this.setState({ errors: undefined });
+        this.setState({ errors: undefined, selected: [] });
         this.props.close();
     }
 
     submit() {
+        this.setState({ submitting: true });
+
         if (['enable', 'disable'].indexOf(this.props.action) !== -1) {
             this.state.selected.map(
                 (ruleset) => {
@@ -142,7 +148,7 @@ export default class RuleToggleModal extends React.Component {
                     return true;
                 }
             );
-        } else if (['suppress', 'threshold', 'tag', 'tagkeep'].indexOf(this.props.action) !== -1) {
+        } else if (supportedActions.concat(['suppress']).indexOf(this.props.action) !== -1) {
             // {"filter_defs": [{"key": "src_ip", "value": "192.168.0.1", "operator": "equal"}], "action": "suppress", "rulesets": [1]}
 
             const filters = [];
@@ -157,16 +163,19 @@ export default class RuleToggleModal extends React.Component {
             const data = {
                 filter_defs: filters, action: this.props.action, rulesets: this.state.selected, comment: this.state.comment
             };
-            if (['threshold', 'tag', 'tagkeep'].indexOf(this.props.action) !== -1) {
+            if (supportedActions.indexOf(this.props.action) !== -1) {
                 data.options = this.state.options;
             }
-            axios.post(config.API_URL + config.PROCESSING_PATH, data).then(
+
+            const url = `${config.API_URL}${config.PROCESSING_PATH}?${buildFilterParams(this.props.filterParams)}${buildQFilter(this.props.filters, this.props.systemSettings)}`;
+            axios.post(url, data).then(
                 () => {
+                    this.setState({ submitting: false });
                     this.close();
                 }
             ).catch(
                 (error) => {
-                    this.setState({ errors: error.response.data });
+                    this.setState({ errors: error.response.data, submitting: false });
                 }
             );
         }
@@ -213,6 +222,15 @@ export default class RuleToggleModal extends React.Component {
     }
 
     render() {
+        let title = null;
+
+        if (this.props.action === 'threat') {
+            title = 'Create a STR threat vector';
+        } else if (this.props.config.rule) {
+            title = `${this.props.action} Rule ${this.props.config.rule.sid}`;
+        } else {
+            title = `Add a ${this.props.action} action`;
+        }
         return (
             <Modal show={this.props.show} onHide={this.close}>
                 <Modal.Header>
@@ -224,8 +242,7 @@ export default class RuleToggleModal extends React.Component {
                     >
                         <Icon type="pf" name="close" />
                     </button>
-                    {this.props.config.rule && <Modal.Title>{this.props.action} Rule {this.props.config.rule.sid}</Modal.Title>}
-                    {!this.props.config.rule && <Modal.Title>Add a {this.props.action} action</Modal.Title>}
+                    <Modal.Title>{title}</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
                     <HuntRestError errors={this.state.errors} />
@@ -273,41 +290,23 @@ export default class RuleToggleModal extends React.Component {
                                 </Col>
                             </FormGroup>
                         </React.Fragment>}
-                        {this.props.action === 'tag' && <FormGroup key="tag" controlId="tag" disabled={false}>
-                            <Col sm={3}>
-                                <strong>Tag</strong>
-                            </Col>
-                            <Col sm={4}>
-                                <FormControl componentClass="select" placeholder="relevant" onChange={this.handleOptionsChange}>
-                                    <option value="relevant">Relevant</option>
-                                    <option value="informational">Informational</option>
-                                </FormControl>
-                            </Col>
-                        </FormGroup>}
-                        {this.props.action === 'tagkeep' && <FormGroup key="tag" controlId="tag" disabled={false}>
-                            <Col sm={3}>
-                                <strong>Tag and Keep</strong>
-                            </Col>
-                            <Col sm={4}>
-                                <FormControl componentClass="select" placeholder="relevant" onChange={this.handleOptionsChange}>
-                                    <option value="relevant">Relevant</option>
-                                    <option value="informational">Informational</option>
-                                </FormControl>
-                            </Col>
-                        </FormGroup>}
-                        <FormGroup controlId="ruleset" disabled={false}>
+                        {this.props.children && this.props.children(this)}
+                        <hr />
+                        {<FormGroup controlId="ruleset" disabled={false}>
                             <Col sm={12}>
-                                <label>Choose Ruleset(s)</label>
+                                <label><strong>Ruleset{this.props.rulesets.length > 1 && 's'}:</strong></label>
                                 {this.props.rulesets && this.props.rulesets.map((ruleset) => (
                                     <div className="row" key={ruleset.pk}>
                                         <div className="col-sm-9">
-                                            <label htmlFor={ruleset.pk}><input type="checkbox" id={ruleset.pk} name={ruleset.pk} onChange={this.handleChange} />{ruleset.name}</label>
-                                            {ruleset.warnings && <div>{ruleset.warnings}</div>}
+                                            <label htmlFor={ruleset.pk}><input type="checkbox" id={ruleset.pk} name={ruleset.pk} onChange={this.handleChange} />  {ruleset.name}</label>
+                                            {ruleset.warnings && <div style={{ marginLeft: '5%' }}>• {ruleset.warnings}</div>} {/* ignore_utf8_check 8226 */}
+                                            {ruleset[`warnings_${this.props.action}`] && <div style={{ marginLeft: '5%' }}>• {ruleset[`warnings_${this.props.action}`]}</div>} {/* ignore_utf8_check 8226 */}
                                         </div>
                                     </div>
                                 ))}
                             </Col>
-                        </FormGroup>
+                        </FormGroup>}
+                        <hr />
 
                         <div className="form-group">
                             <div className="col-sm-9">
@@ -326,7 +325,7 @@ export default class RuleToggleModal extends React.Component {
                     >
                         Cancel
                     </Button>
-                    {!this.state.noaction && <Button bsStyle="primary" onClick={this.submit}>
+                    {!this.state.noaction && <Button bsStyle="primary" onClick={this.submit} disabled={this.state.submitting}>
                         Submit
                     </Button>}
                 </Modal.Footer>
@@ -342,4 +341,7 @@ RuleToggleModal.propTypes = {
     show: PropTypes.any,
     config: PropTypes.any,
     close: PropTypes.func,
+    children: PropTypes.any,
+    systemSettings: PropTypes.any,
+    filterParams: PropTypes.any
 };

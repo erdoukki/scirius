@@ -18,10 +18,9 @@ You should have received a copy of the GNU General Public License
 along with Scirius.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-from __future__ import unicode_literals
+
 import os
 
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from rules.es_data import ESData
@@ -35,8 +34,10 @@ class Command(BaseCommand, ESData):
         ESData.__init__(self)
 
     def add_arguments(self, parser):
-        parser.add_argument('source',
-            help='Path to kibana dashboards directory')
+        parser.add_argument(
+            'source',
+            help='Path to kibana dashboards directory'
+        )
 
     def handle(self, *args, **options):
         source = options['source']

@@ -25,8 +25,8 @@
 	<nav class="navbar navbar-default" role="navigation">
  <div class="container-fluid">
 		<div class="navbar-header">
-			<a class="navbar-dropdown collapsed" type="button" data-target="sc_menu" data-toggle="dropdown" id="logo">
-			<img src="{% static 'rules/stamus.png' %}"/><span class="caret"/>
+			<a class="navbar-dropdown collapsed" type="button" data-target="sc_menu" data-toggle="dropdown" id="logo" style="cursor: pointer;">
+			<img src="{% static 'rules/stamus.png' %}" id="img-logo"/><span class="caret"/>
 </a>
 			<ul class="dropdown-menu" id="sc_menu" role="menu">
             <li><a href="{% url 'system_settings' %}" >{% bootstrap_icon "list-alt"%} System settings</a></li>
@@ -50,6 +50,7 @@
          <span class="icon-bar"></span>
          <span class="icon-bar"></span>
           </button>
+         <span class="logo-title">{{ scirius_long_name }}</span>
         </div>
 
 
@@ -67,12 +68,18 @@
 
 		</ul>
 <div class="navbar-right">
-		<form class="navbar-form navbar-nav"  action="{% url 'scirius_search' %}" method="post" role="search">{% csrf_token %}
-<span class="form-group">
-			<span class="glyphicon glyphicon-search"> <input type="text" name="search" id="id_search"/></span>
+<ul class="nav navbar-nav">
+<li>
+<a class="dropdown-toggle" type="button" id="display_search" data-toggle="dropdown" href="#">
+<span class="glyphicon glyphicon-search"> <span class="caret"/></span>
+</a>
+		<form class="dropdown-menu" id="display_search"  action="{% url 'scirius_search' %}" method="post" role="search">{% csrf_token %}
+<span class="form-group sn-drop-down">
+   <span class="glyphicon glyphicon-search"> <input type="text" name="search" id="id_search"/></span>
 </span>
 		</form>
-
+</li>
+</ul>
 {% include 'rules/header_right.html' %}
 
 </div>
@@ -158,7 +165,12 @@
             <div id="scirius_down_label" style="display:none;" >
                 <div class="alert alert-danger">Scirius is down. Don't leave page.</div>
             </div>
-
+            {% block extra_message %}
+                {% if additional_error %}
+                    <div class="alert alert-danger alert-dismissible"><button type="button" class="close" data-dismiss="alert"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
+                    <span id="error">{{ additional_error|safe }}</span></div>
+                {% endif %}
+            {% endblock %}
                     {% block error %}
 
 			{% if messages %}
@@ -169,7 +181,6 @@
 			    </div>
 			    {% endfor %}
 			{% endif %}
-
                       {% if error %}
                        <div class="alert alert-danger alert-dismissible"><button type="button" class="close" data-dismiss="alert"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
  <span id="error">{{ error }}</span></div>

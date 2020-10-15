@@ -26,12 +26,13 @@ import axios from 'axios';
 import store from 'store';
 import md5 from 'md5';
 import * as config from 'hunt_common/config/Api';
-import { HuntFilter } from '../../HuntFilter';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
+import RuleToggleModal from 'hunt_common/RuleToggleModal';
+import HuntFilter from '../../HuntFilter';
 import HuntPaginationRow from '../../HuntPaginationRow';
-import RuleToggleModal from '../../RuleToggleModal';
 import RuleCard from '../../RuleCard';
 import DashboardPage from '../DashboardPage';
-import { buildQFilter } from '../../helpers/buildQFilter';
 import RulePage from '../../RulePage';
 import RuleInList from '../../RuleInList';
 import List from '../../components/List/index';
@@ -40,17 +41,7 @@ import { actionsButtons,
     buildListUrlParams,
     loadActions,
     createAction,
-    UpdateFilter,
-    addFilter,
-    handlePaginationChange,
-    onFirstPage,
-    onNextPage,
-    onPrevPage,
-    onLastPage,
-    setViewType,
-    UpdateSort,
     closeAction,
-    updateAlertTag,
     buildFilter } from '../../helpers/common';
 
 axios.defaults.xsrfCookieName = 'csrftoken';
@@ -125,13 +116,9 @@ function processHitsStats(res, rules, updateCallback) {
     }
 }
 
-export function updateHitsStats(rules, pFromDate, updateCallback, qfilter) {
+export function updateHitsStats(rules, filterParams, updateCallback, qfilter) {
     const sids = Array.from(rules, (x) => x.sid).join();
-    const fromDate = `&from_date=${pFromDate}`;
-    let url = config.API_URL + config.ES_SIGS_LIST_PATH + sids + fromDate;
-    if (qfilter) {
-        url += `&filter=${qfilter.replace('&qfilter=', '')}`;
-    }
+    const url = `${config.API_URL + config.ES_SIGS_LIST_PATH + sids}&${filterParams + qfilter}`;
     if (typeof statsCache[encodeURI(url)] !== 'undefined') {
         processHitsStats(statsCache[encodeURI(url)], rules, updateCallback);
         return;
@@ -143,7 +130,7 @@ export function updateHitsStats(rules, pFromDate, updateCallback, qfilter) {
     });
 }
 
-export default class SignaturesPage extends React.Component {
+export class SignaturesPage extends React.Component {
 // export class RulesList extends HuntList {
     constructor(props) {
         super(props);
@@ -156,8 +143,6 @@ export default class SignaturesPage extends React.Component {
             rulesets: [],
             count: 0,
             loading: true,
-            view: 'rules_list',
-            display_toggle: true,
             action: { view: false, type: 'suppress' },
             net_error: undefined,
             rulesFilters,
@@ -168,25 +153,15 @@ export default class SignaturesPage extends React.Component {
         this.cache = {};
         this.cachePage = 1;
         this.updateRulesState = this.updateRulesState.bind(this);
+        this.updateSignatureListState = this.updateSignatureListState.bind(this);
         this.fetchHitsStats = this.fetchHitsStats.bind(this);
-        this.displayRule = this.displayRule.bind(this);
-        this.RuleUpdateFilter = this.RuleUpdateFilter.bind(this);
         this.actionsButtons = actionsButtons.bind(this);
         this.buildListUrlParams = buildListUrlParams.bind(this);
         this.loadActions = loadActions.bind(this);
         this.createAction = createAction.bind(this);
-        this.UpdateFilter = UpdateFilter.bind(this);
-        this.addFilter = addFilter.bind(this);
-        this.handlePaginationChange = handlePaginationChange.bind(this);
-        this.onFirstPage = onFirstPage.bind(this);
-        this.onNextPage = onNextPage.bind(this);
-        this.onPrevPage = onPrevPage.bind(this);
-        this.onLastPage = onLastPage.bind(this);
-        this.setViewType = setViewType.bind(this);
-        this.UpdateSort = UpdateSort.bind(this);
         this.closeAction = closeAction.bind(this);
-        this.updateAlertTag = updateAlertTag.bind(this);
         this.buildFilter = buildFilter.bind(this);
+        this.fetchData = this.fetchData.bind(this);
     }
 
     componentDidMount() {
@@ -197,11 +172,9 @@ export default class SignaturesPage extends React.Component {
             });
         }
         if (sid !== undefined) {
-            this.setState({
-                display_rule: sid, view: 'rule', display_toggle: false, loading: false
-            });
+            this.setState({ loading: false });
         } else {
-            this.fetchData(this.props.rules_list, this.props.filters);
+            this.fetchData();
         }
         const huntFilters = store.get('huntFilters');
         axios.get(config.API_URL + config.HUNT_FILTER_PATH).then(
@@ -232,8 +205,20 @@ export default class SignaturesPage extends React.Component {
     }
 
     componentDidUpdate(prevProps) {
-        if (prevProps.from_date !== this.props.from_date || JSON.stringify(prevProps.filters) !== JSON.stringify(this.props.filters)) {
-            this.fetchData(this.props.rules_list, this.props.filters);
+        const filtersChanged = (JSON.stringify(prevProps.filtersWithAlert) !== JSON.stringify(this.props.filtersWithAlert));
+        if (JSON.stringify(prevProps.filterParams) !== JSON.stringify(this.props.filterParams) || filtersChanged) {
+            const sid = this.findSID(this.props.filtersWithAlert);
+            if (sid !== undefined) {
+                // eslint-disable-next-line react/no-did-update-set-state
+                this.setState({
+                    loading: false
+                });
+            } else {
+                this.fetchData();
+            }
+            if (filtersChanged) {
+                this.loadActions(this.props.filtersWithAlert);
+            }
         }
     }
 
@@ -249,7 +234,7 @@ export default class SignaturesPage extends React.Component {
     findSID = (filters) => {
         let foundSid;
         for (let i = 0; i < filters.length; i += 1) {
-            if (filters[i].id === 'alert.signature_id') {
+            if (filters[i].id === 'alert.signature_id' && filters[i].negated === false) {
                 foundSid = filters[i].value;
                 break;
             }
@@ -257,35 +242,19 @@ export default class SignaturesPage extends React.Component {
         return foundSid;
     }
 
-    RuleUpdateFilter(filters) {
-        // iterate on filter, if we have a sid we display the rule page
-        const foundSid = this.findSID(filters);
-        if (foundSid !== undefined) {
-            this.setState({ view: 'rule', display_toggle: false, display_rule: foundSid });
-        } else {
-            this.setState({ view: 'rules_list', display_toggle: true, display_rule: undefined });
-        }
-
-        let page = 1;
-        if (filters.length === 0) {
-            page = this.cachePage;
-        } else {
-            this.setState({ updateCache: false });
-        }
-        this.UpdateFilter(filters, page, false);
-    }
-
-    fetchData(rulesStat, filters) {
-        const stringFilters = this.buildFilter(filters);
-        const hash = md5(`${rulesStat.pagination.page}|${rulesStat.pagination.perPage}|${this.props.from_date}|${rulesStat.sort.id}|${rulesStat.sort.asc}|${stringFilters}`);
+    fetchData() {
+        const stringFilters = this.buildFilter(this.props.filtersWithAlert);
+        const rulesStat = this.props.rules_list;
+        const hash = md5(`${rulesStat.pagination.page}|${rulesStat.pagination.perPage}|${JSON.stringify(this.props.filterParams)}|${rulesStat.sort.id}|${rulesStat.sort.asc}|${stringFilters}`);
         if (typeof this.cache[hash] !== 'undefined') {
-            this.processRulesData(this.cache[hash].RuleRes, this.cache[hash].SrcRes, this.cache[hash].filters);
+            this.processRulesData(this.cache[hash].RuleRes, this.cache[hash].SrcRes);
             return;
         }
 
         this.setState({ loading: true });
+        const filterParams = buildFilterParams(this.props.filterParams);
         axios.all([
-            axios.get(`${config.API_URL + config.RULE_PATH}?${this.buildListUrlParams(rulesStat)}&from_date=${this.props.from_date}&highlight=true${stringFilters}`),
+            axios.get(`${config.API_URL + config.RULE_PATH}?${this.buildListUrlParams(rulesStat)}&${filterParams}&highlight=true${stringFilters}`),
             axios.get(`${config.API_URL + config.SOURCE_PATH}?page_size=100`),
         ])
         .then(axios.spread((RuleRes, SrcRes) => {
@@ -295,22 +264,14 @@ export default class SignaturesPage extends React.Component {
                 this.setState({ updateCache: true });
             }
 
-            this.cache[hash] = { RuleRes, SrcRes, filters };
-            this.processRulesData(RuleRes, SrcRes, filters);
+            this.cache[hash] = { RuleRes, SrcRes };
+            this.processRulesData(RuleRes, SrcRes);
         })).catch((e) => {
             this.setState({ net_error: e, loading: false });
         });
     }
 
-    displayRule(rule) {
-        this.setState({ display_rule: rule });
-        const activeFilters = [...this.props.filters, {
-            label: `alert.signature_id: ${rule.sid}`, id: 'alert.signature_id', value: rule.sid, query: 'filter', negated: false
-        }];
-        this.RuleUpdateFilter(activeFilters);
-    }
-
-    processRulesData(RuleRes, SrcRes, filters) {
+    processRulesData(RuleRes, SrcRes) {
         const sourcesArray = SrcRes.data.results;
         const sources = {};
         this.setState({ net_error: undefined });
@@ -326,16 +287,17 @@ export default class SignaturesPage extends React.Component {
         });
         if (RuleRes.data.results.length > 0) {
             if (!RuleRes.data.results[0].timeline_data) {
-                this.fetchHitsStats(RuleRes.data.results, filters);
+                this.fetchHitsStats(RuleRes.data.results);
             } else {
                 this.buildHitsStats(RuleRes.data.results);
             }
         }
     }
 
-    fetchHitsStats(rules, filters) {
-        const qfilter = buildQFilter(filters, this.props.systemSettings);
-        updateHitsStats(rules, this.props.from_date, this.updateRulesState, qfilter);
+    fetchHitsStats(rules) {
+        const qfilter = buildQFilter(this.props.filtersWithAlert, this.props.systemSettings);
+        const filterParams = buildFilterParams(this.props.filterParams);
+        updateHitsStats(rules, filterParams, this.updateRulesState, qfilter);
     }
 
     buildHitsStats(rules) {
@@ -350,63 +312,62 @@ export default class SignaturesPage extends React.Component {
         this.setState({ rules });
     }
 
-    updateRuleListState(rulesListState) {
-        this.props.updateListState(rulesListState);
+    updateSignatureListState(sigsListState) {
+        this.props.updateListState(sigsListState, () => this.fetchData());
     }
 
     render() {
+        const displayRule = this.findSID(this.props.filters);
+        const view = (displayRule) ? 'rule' : 'rules_list';
         return (
             <div className="RulesList HuntList">
                 {this.state.net_error !== undefined && <div className="alert alert-danger">Problem with backend: {this.state.net_error.message}</div>}
                 <ErrorHandler>
-                    <HuntFilter ActiveFilters={this.props.filters}
+                    <HuntFilter
                         config={this.props.rules_list}
-                        ActiveSort={this.props.rules_list.sort}
-                        UpdateFilter={this.RuleUpdateFilter}
-                        UpdateSort={this.UpdateSort}
-                        setViewType={this.setViewType}
+                        itemsListUpdate={this.updateSignatureListState}
                         filterFields={this.state.rulesFilters}
                         sort_config={RuleSortFields}
-                        displayToggle={this.state.display_toggle}
+                        displayToggle={view === 'rules_list'}
                         actionsButtons={this.actionsButtons}
-                        queryType={['filter', 'rest']}
+                        queryType={['filter', 'rest', 'filter_host_id']}
+                        page={this.props.page}
                     />
                 </ErrorHandler>
 
-                {this.state.view === 'rules_list' && <Spinner loading={this.state.loading} />}
+                {view === 'rules_list' && <Spinner loading={this.state.loading} />}
 
-                {this.state.view === 'rules_list' && <List type={this.props.rules_list.view_type}
+                {view === 'rules_list' && <List type={this.props.rules_list.view_type}
                     items={this.state.rules}
                     component={{ list: RuleInList, card: RuleCard }}
                     itemProps={{
                         sources: this.state.sources,
-                        from_date: this.props.from_date,
-                        switchPage: this.displayRule,
-                        addFilter: this.addFilter,
+                        filterParams: this.props.filterParams,
                         rulesets: this.state.rulesets,
                     }}
                 />}
                 <ErrorHandler>
-                    { this.state.view === 'rules_list' && <HuntPaginationRow
+                    { view === 'rules_list' && <HuntPaginationRow
                         viewType={PAGINATION_VIEW.LIST}
-                        pagination={this.props.rules_list.pagination}
-                        onPaginationChange={this.handlePaginationChange}
-                        amountOfPages={Math.ceil(this.state.count / this.props.rules_list.pagination.perPage)}
-                        pageInputValue={this.props.rules_list.pagination.page}
-                        itemCount={this.state.count - 1} // used as last item
-                        itemsStart={(this.props.rules_list.pagination.page - 1) * this.props.rules_list.pagination.perPage}
-                        itemsEnd={Math.min((this.props.rules_list.pagination.page * this.props.rules_list.pagination.perPage) - 1, this.state.count - 1)}
-                        onFirstPage={this.onFirstPage}
-                        onNextPage={this.onNextPage}
-                        onPreviousPage={this.onPrevPage}
-                        onLastPage={this.onLastPage}
+                        onPaginationChange={this.updateSignatureListState}
+                        itemsCount={this.state.count}
+                        itemsList={this.props.rules_list}
                     /> }
-                    {this.state.view === 'rule' && <RulePage systemSettings={this.props.systemSettings} rule={this.state.display_rule} config={this.props.rules_list} filters={this.props.filters} from_date={this.props.from_date} UpdateFilter={this.RuleUpdateFilter} addFilter={this.addFilter} rulesets={this.state.rulesets} />}
-                    {this.state.view === 'dashboard' && <DashboardPage />}
+                    {view === 'rule' && <RulePage systemSettings={this.props.systemSettings} rule={displayRule} config={this.props.rules_list} filters={this.props.filters} filterParams={this.props.filterParams} rulesets={this.state.rulesets} />}
+                    {view === 'dashboard' && <DashboardPage />}
                 </ErrorHandler>
 
                 <ErrorHandler>
-                    <RuleToggleModal show={this.state.action.view} action={this.state.action.type} config={this.props.rules_list} filters={this.props.filters} close={this.closeAction} rulesets={this.state.rulesets} />
+                    {this.state.action.view && <RuleToggleModal
+                        show={this.state.action.view}
+                        action={this.state.action.type}
+                        config={this.props.rules_list}
+                        filters={this.props.filters}
+                        close={this.closeAction}
+                        rulesets={this.state.rulesets}
+                        systemSettings={this.props.systemSettings}
+                        filterParams={this.props.filterParams}
+                    />}
                 </ErrorHandler>
             </div>
         );
@@ -415,8 +376,10 @@ export default class SignaturesPage extends React.Component {
 
 SignaturesPage.propTypes = {
     systemSettings: PropTypes.any,
-    from_date: PropTypes.any,
     filters: PropTypes.any,
+    filtersWithAlert: PropTypes.any,
     updateListState: PropTypes.any, // should be removed when redux is implemented
     rules_list: PropTypes.any, // should be removed when redux is implemented
+    page: PropTypes.any,
+    filterParams: PropTypes.object.isRequired,
 }

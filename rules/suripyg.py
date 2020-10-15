@@ -21,11 +21,12 @@ along with Scirius.  If not, see <http://www.gnu.org/licenses/>.
 This code is based on hogments by Rune Hammersland (https://github.com/yaunj/hogments)
 """
 
-from __future__ import unicode_literals
+
 from pygments.lexer import RegexLexer, include, bygroups
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 import pygments.token as t
+
 
 class SuriLexer(RegexLexer):
     name = 'suricata'
@@ -79,8 +80,8 @@ class SuriLexer(RegexLexer):
              r'noalert|limit|treshold|count|str_offset|str_depth|tagged)',
                 t.Name.Attribute),
             (r'(<-|->|<>)', t.Operator),
-            (r'”', t.String, str('fancy-string')),
-            (r'“', t.String, str('fancy-string')),
+            (r'”', t.String, str('fancy-string')),  # ignore_utf8_check: 8221
+            (r'“', t.String, str('fancy-string')),  # ignore_utf8_check: 8220
             (r'"', t.String, str('dq-string')),
             (r'\'', t.String, str('sq-string')),
             (r'(\d+)', t.Number),
@@ -103,8 +104,8 @@ class SuriLexer(RegexLexer):
         ],
         str('fancy-string'): [
             include('hex'),
-            (r'([^”])', t.String),
-            (r'”', t.String, str('#pop'))
+            (r'([^”])', t.String),  # ignore_utf8_check: 8221
+            (r'”', t.String, str('#pop'))  # ignore_utf8_check: 8221
         ],
         str('metadata'): [
             (r'\s', t.Whitespace),
@@ -118,6 +119,7 @@ class SuriLexer(RegexLexer):
             (r';', t.Punctuation, str('#pop'))
         ]
     }
+
 
 def SuriHTMLFormat(rule):
     return highlight(rule, SuriLexer(encoding='utf-8'), HtmlFormatter())

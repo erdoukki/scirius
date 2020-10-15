@@ -1,15 +1,15 @@
-from __future__ import unicode_literals
+
 from django.conf.urls import url, include
 from django.conf import settings
 
-from views import homepage, KibanaProxyView, EveboxProxyView, MolochProxyView
-from rest_api import router
+from .views import homepage, KibanaProxyView, EveboxProxyView, MolochProxyView
+from .rest_api import router
 
 urlpatterns = [
     url(r'^rules/', include('rules.urls')),
     url(r'^accounts/', include('accounts.urls')),
     url(r'^viz/', include('viz.urls')),
-    url(r'^'+ settings.RULESET_MIDDLEWARE + '/', include('' + settings.RULESET_MIDDLEWARE + '.urls')),
+    url(r'^' + settings.RULESET_MIDDLEWARE + '/', include('' + settings.RULESET_MIDDLEWARE + '.urls')),
     url(r'^rest/', include(router.urls)),
     url('^$', homepage),
     # Forward "app/kibana.*" to kibana (work around to https://github.com/elastic/kibana/issues/5230)

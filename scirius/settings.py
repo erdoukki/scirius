@@ -8,15 +8,16 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/1.6/ref/settings/
 """
 
-from __future__ import unicode_literals
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 from distutils.version import LooseVersion
 from django import get_version
 import os
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
-SCIRIUS_FLAVOR="Scirius CE"
-SCIRIUS_VERSION="3.2.0"
+SCIRIUS_FLAVOR = "Scirius CE"
+SCIRIUS_VERSION = "3.5.0"
+SCIRIUS_LONG_NAME = "Suricata Management"
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.6/howto/deployment/checklist/
@@ -32,7 +33,6 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = (
-    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -64,6 +64,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'scirius.loginrequired.LoginRequiredMiddleware',
     'scirius.utils.TimezoneMiddleware',
+    'django_cprofile_middleware.middleware.ProfilerMiddleware'
 ]
 
 TEMPLATES = [
@@ -84,18 +85,18 @@ TEMPLATES = [
 
 WEBPACK_LOADER = {
     'DEFAULT': {
-            'BUNDLE_DIR_NAME': 'rules/static/bundles/',
-            'STATS_FILE': os.path.join(BASE_DIR, 'rules/static/webpack-stats.prod.json'),
-        }
+        'BUNDLE_DIR_NAME': 'rules/static/bundles/',
+        'STATS_FILE': os.path.join(BASE_DIR, 'rules/static/webpack-stats.prod.json'),
+    }
 }
 
-## For development (set that up in your local settings)
-#WEBPACK_LOADER = {
-#    'DEFAULT': {
-#            'BUNDLE_DIR_NAME': 'bundles/',
-#            'STATS_FILE': os.path.join(BASE_DIR, 'webpack-stats.dev.json'),
-#        }
-#}
+# For development (set that up in your local settings)
+# WEBPACK_LOADER = {
+#     'DEFAULT': {
+#             'BUNDLE_DIR_NAME': 'bundles/',
+#             'STATS_FILE': os.path.join(BASE_DIR, 'webpack-stats.dev.json'),
+#         }
+# }
 
 ROOT_URLCONF = 'scirius.urls'
 
@@ -146,7 +147,7 @@ LOGGING = {
             'format': '%(asctime)s %(levelname)s %(message)s'
         },
         'raw': {
-            'format': '%(message)s'
+            'format': '%(asctime)s %(message)s'
         },
     },
     'handlers': {
@@ -199,13 +200,14 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 30 
+    'PAGE_SIZE': 30
 }
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/1.6/howto/static-files/
 
 STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
 # Suricata binary
 SURICATA_BINARY = "suricata"
@@ -215,13 +217,16 @@ SURICATA_NAME_IS_HOSTNAME = False
 # Do we have the doc
 SCIRIUS_HAS_DOC = True
 
+# Scirius run in SELKS
+SCIRIUS_IN_SELKS = True
+
 # Sources update
 DEFAULT_SOURCE_INDEX_URL = "https://www.openinfosecfoundation.org/rules/index.yaml"
 
 # Elastic search
 
 USE_ELASTICSEARCH = True
-#ELASTICSEARCH_ADDRESS = "127.0.0.1:9200"
+# ELASTICSEARCH_ADDRESS = "127.0.0.1:9200"
 ELASTICSEARCH_ADDRESS = "localhost:9200"
 # You can use a star to avoid timestamping expansion for example 'logstash-*'
 ELASTICSEARCH_LOGSTASH_INDEX = "logstash-"
@@ -233,6 +238,8 @@ ELASTICSEARCH_LOGSTASH_TIMESTAMPING = "daily"
 ELASTICSEARCH_KEYWORD = "raw"
 # Hostname field (usually "hostname" or "host")
 ELASTICSEARCH_HOSTNAME = "host"
+# Timestamp field (usually "@timestamp" or "timestamp")
+ELASTICSEARCH_TIMESTAMP = "@timestamp"
 
 # Kibana
 USE_KIBANA = False
@@ -244,8 +251,6 @@ KIBANA_PROXY = False
 KIBANA_URL = "http://localhost:9292"
 # Kibana index name
 KIBANA_INDEX = "kibana-int"
-# Number of dashboards to display
-KIBANA_DASHBOARDS_COUNT = 20
 # Path to Kibana's dashboards installation
 KIBANA_DASHBOARDS_PATH = '/opt/kibana-dashboards/'
 KIBANA6_DASHBOARDS_PATH = '/opt/kibana6-dashboards/'
@@ -261,7 +266,7 @@ USE_LOGSTASH_STATS = False
 # Set value to path to suricata unix socket to use suricatasc
 # based info
 SURICATA_UNIX_SOCKET = None
-#SURICATA_UNIX_SOCKET = "/var/run/suricata/suricata-command.socket"
+# SURICATA_UNIX_SOCKET = "/var/run/suricata/suricata-command.socket"
 
 # Influxdb
 USE_INFLUXDB = False
@@ -281,14 +286,14 @@ MOLOCH_URL = "https://localhost:8005"
 # If user is set in PROXY_PARAMS then basic authentication will
 # be used.
 USE_PROXY = False
-PROXY_PARAMS = { 'http': "http://proxy:3128", 'https': "http://proxy:3128" }
+PROXY_PARAMS = {'http': "http://proxy:3128", 'https': "http://proxy:3128"}
 # For basic authentication you can use
 # PROXY_PARAMS = { 'http': "http://user:pass@proxy:3128", 'https': "http://user:pass@proxy:3128" }
 
 GIT_SOURCES_BASE_DIRECTORY = os.path.join(BASE_DIR, 'git-sources/')
 
 DBBACKUP_STORAGE = 'dbbackup.storage.filesystem_storage'
-#DBBACKUP_STORAGE_OPTIONS = {'location': '/var/backups'}
+# DBBACKUP_STORAGE_OPTIONS = {'location': '/var/backups'}
 
 # Ruleset generator framework
 RULESET_MIDDLEWARE = 'suricata'
@@ -296,9 +301,9 @@ RULESET_MIDDLEWARE = 'suricata'
 # For IPS
 RULESET_TRANSFORMATIONS = (('reject', 'Reject'), ('drop', 'Drop'), ('filestore', 'Filestore'))
 # For an IDS with reject configured
-#RULESET_TRANSFORMATIONS = (('reject', 'Reject'), ('filestore', 'Filestore'))
+# RULESET_TRANSFORMATIONS = (('reject', 'Reject'), ('filestore', 'Filestore'))
 # For an IDS without reject
-#RULESET_TRANSFORMATIONS = (('filestore', 'Filestore'),)
+# RULESET_TRANSFORMATIONS = (('filestore', 'Filestore'),)
 
 LOGIN_URL = '/accounts/login/'
 
@@ -307,9 +312,9 @@ IPWARE_PRIVATE_IP_PREFIX = ()
 HAVE_NETINFO_AGG = False
 
 try:
-    from local_settings import *
+    from .local_settings import *  # noqa: F403, F401
 except:
     pass
 
 if KIBANA_PROXY:
-    INSTALLED_APPS += ( 'revproxy',)
+    INSTALLED_APPS += ('revproxy',)

@@ -1,10 +1,12 @@
-/* eslint-disable jsx-a11y/no-static-element-interactions */
 import React from 'react';
 import PropTypes from 'prop-types';
+import { connect } from 'react-redux';
 import { Icon, Spinner } from 'patternfly-react';
+import { sections } from 'hunt_common/constants';
 import RuleEditKebab from './components/RuleEditKebab';
 import SciriusChart from './components/SciriusChart';
 import ErrorHandler from './components/Error';
+import { addFilter } from './containers/App/stores/global';
 
 const RuleCard = (props) => {
     const { category } = props.data;
@@ -46,7 +48,7 @@ const RuleCard = (props) => {
                             <ErrorHandler>
                                 <SciriusChart data={props.data.timeline}
                                     axis={{
-                                        x: { show: false, min: props.from_date },
+                                        x: { show: false, min: props.filterParams.fromDate, max: props.filterParams.toDate },
                                         y: { show: false }
                                     }}
                                     legend={{ show: false }}
@@ -62,7 +64,7 @@ const RuleCard = (props) => {
                     <div>
                         SID: <strong>{props.data.sid}</strong>
                         <span className="pull-right">
-                            <a onClick={() => { props.switchPage(props.data); }} style={{ cursor: 'pointer' }}>
+                            <a onClick={() => props.addFilter(sections.GLOBAL, { id: 'alert.signature_id', value: props.data.sid, negated: false })} style={{ cursor: 'pointer' }}>
                                 <Icon type="fa" name="search-plus" />
                             </a>
                         </span>
@@ -76,9 +78,13 @@ const RuleCard = (props) => {
 RuleCard.propTypes = {
     data: PropTypes.any,
     sources: PropTypes.any,
-    from_date: PropTypes.any,
-    switchPage: PropTypes.any,
+    filterParams: PropTypes.object.isRequired,
     rulesets: PropTypes.any,
+    addFilter: PropTypes.func,
 };
 
-export default RuleCard;
+const mapDispatchToProps = {
+    addFilter
+};
+
+export default connect(null, mapDispatchToProps)(RuleCard);

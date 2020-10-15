@@ -468,7 +468,12 @@ function populate_topip_actions(pdiv, field, direction) {
                 $(this).parent("tr").children(".host").css('cursor', 'pointer');
                 $(this).parent("tr").children(".host").click( function() {
 			ip = $(this).text()
-			window.open("{{ evebox_url }}/#/events;q=" + field + ":\"" + ip + "\"");
+
+            {% if custom_eve_url %}
+                window.open("{{ custom_eve_url|safe }}" + ip);
+            {% else %}
+                window.open("{{ evebox_url }}/#/events;q=" + field + ":\"" + ip + "\"");
+            {% endif %}
 		});
 	    {% endif %}
 
@@ -479,7 +484,7 @@ function populate_topip_actions(pdiv, field, direction) {
 
 function load_ip_stats() {
     $.ajax({
-       url: '{% url 'es_filter_ip' %}?field=rule_src&sid={{ rule.pk }}&from_date={{ from_date }}',
+       url: '{% url 'elasticsearch' %}?query=rule_src&sid={{ rule.pk }}&from_date={{ from_date }}',
           success: function(data) {
              $('#src_ip_table').empty();
              $('#src_ip_table').append(data);
@@ -493,7 +498,7 @@ function load_ip_stats() {
     });
 
     $.ajax({
-       url: '{% url 'es_filter_ip' %}?field=rule_dest&sid={{ rule.pk }}&from_date={{ from_date }}',
+       url: '{% url 'elasticsearch' %}?query=rule_dest&sid={{ rule.pk }}&from_date={{ from_date }}',
           success: function(data) {
              $('#dest_ip_table').empty();
              $('#dest_ip_table').append(data);
@@ -507,7 +512,7 @@ function load_ip_stats() {
     });
 
     $.ajax({
-       url: '{% url 'es_filter_ip' %}?field=rule_source&sid={{ rule.pk }}&from_date={{ from_date }}',
+       url: '{% url 'elasticsearch' %}?query=rule_source&sid={{ rule.pk }}&from_date={{ from_date }}',
           success: function(data) {
              $('#source_ip_table').empty();
              $('#source_ip_table').append(data);
@@ -526,7 +531,7 @@ function load_ip_stats() {
     });
 
     $.ajax({
-       url: '{% url 'es_filter_ip' %}?field=rule_target&sid={{ rule.pk }}&from_date={{ from_date }}',
+       url: '{% url 'elasticsearch' %}?query=rule_target&sid={{ rule.pk }}&from_date={{ from_date }}',
           success: function(data) {
              $('#target_ip_table').empty();
              $('#target_ip_table').append(data);

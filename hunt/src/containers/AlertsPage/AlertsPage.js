@@ -27,14 +27,16 @@ import axios from 'axios';
 import store from 'store';
 import md5 from 'md5';
 import * as config from 'hunt_common/config/Api';
-import { buildQFilter } from '../../helpers/buildQFilter';
-import RuleToggleModal from '../../RuleToggleModal';
-import { HuntFilter } from '../../HuntFilter';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
+import RuleToggleModal from 'hunt_common/RuleToggleModal';
+import HuntFilter from '../../HuntFilter';
 import AlertItem from '../../components/AlertItem';
-import { actionsButtons, buildListUrlParams, loadActions, UpdateFilter, addFilter, createAction, closeAction } from '../../helpers/common';
+import { actionsButtons, buildListUrlParams, loadActions, createAction, closeAction } from '../../helpers/common';
 import ErrorHandler from '../../components/Error';
+import HuntRestError from '../../components/HuntRestError';
 
-export default class AlertsPage extends React.Component {
+export class AlertsPage extends React.Component {
     constructor(props) {
         super(props);
 
@@ -44,24 +46,22 @@ export default class AlertsPage extends React.Component {
             alerts: [],
             rulesets: [],
             loading: true,
-            refresh_data: false,
             action: { view: false, type: 'suppress' },
             net_error: undefined,
             rulesFilters,
-            supported_actions: []
+            supported_actions: [],
+            errors: null
         };
         this.fetchData = this.fetchData.bind(this);
         this.actionsButtons = actionsButtons.bind(this);
         this.buildListUrlParams = buildListUrlParams.bind(this);
         this.loadActions = loadActions.bind(this);
-        this.UpdateFilter = UpdateFilter.bind(this);
-        this.addFilter = addFilter.bind(this);
         this.createAction = createAction.bind(this);
         this.closeAction = closeAction.bind(this);
     }
 
     componentDidMount() {
-        this.fetchData(this.props.rules_list, this.props.filters);
+        this.fetchData();
         if (this.state.rulesets.length === 0) {
             axios.get(config.API_URL + config.RULESET_PATH).then((res) => {
                 this.setState({ rulesets: res.data.results });
@@ -98,49 +98,57 @@ export default class AlertsPage extends React.Component {
     }
 
     componentDidUpdate(prevProps) {
-        if (prevProps.from_date !== this.props.from_date) {
-            this.fetchData(this.props.rules_list, this.props.filters);
+        const filtersChanged = (JSON.stringify(prevProps.filtersWithAlert) !== JSON.stringify(this.props.filtersWithAlert));
+        if (JSON.stringify(prevProps.filterParams) !== JSON.stringify(this.props.filterParams) || filtersChanged) {
+            this.fetchData();
+            if (filtersChanged) {
+                this.loadActions();
+            }
         }
     }
 
-    fetchData(state, filters) {
-        let stringFilters = buildQFilter(filters, this.props.systemSettings);
-        if (stringFilters === null) {
-            stringFilters = '';
-        } else {
-            stringFilters = `&filter=${stringFilters.replace('&qfilter=', '')}`;
-        }
-        this.setState({ refresh_data: true, loading: true });
-        const url = `${config.API_URL + config.ES_BASE_PATH}alerts_tail/?search_target=0&${this.buildListUrlParams(state)}&from_date=${this.props.from_date}${stringFilters}`;
-        axios.get(url).then((res) => {
+    fetchData() {
+        const stringFilters = buildQFilter(this.props.filtersWithAlert, this.props.systemSettings);
+        const filterParams = buildFilterParams(this.props.filterParams);
+        const listParams = this.buildListUrlParams(this.props.rules_list);
+        this.setState({ loading: true });
+
+        const url = `${config.API_URL + config.ES_BASE_PATH}alerts_tail/?search_target=0&${listParams}&${filterParams}${stringFilters}`;
+        axios.get(url)
+        .then((res) => {
             if ((res.data !== null) && (typeof res.data !== 'string')) {
-                this.setState({ alerts: res.data, loading: false });
+                this.setState({ alerts: res.data, loading: false, error: null });
             } else {
                 this.setState({ loading: false });
             }
+        })
+        .catch((error) => {
+            if (error.response.status === 500) {
+                this.setState({ errors: [`${error.response.data[0].slice(0, 160)}...`], loading: false });
+                return;
+            }
+            this.setState({ errors: null, loading: false });
         });
     }
 
-    updateRuleListState(rulesListState) {
-        this.props.updateListState(rulesListState);
+    updateRuleListState(rulesListState, fetchDataCallback) {
+        this.props.updateListState(rulesListState, fetchDataCallback);
     }
 
     render() {
         return (
             <div className="AlertsList HuntList">
+                {this.state.errors && <HuntRestError errors={this.state.errors} />}
                 <ErrorHandler>
                     <HuntFilter
-                        ActiveFilters={this.props.filters}
                         config={this.props.rules_list}
                         ActiveSort={this.props.rules_list.sort}
-                        UpdateFilter={this.UpdateFilter}
                         UpdateSort={this.UpdateSort}
-                        setViewType={this.setViewType}
                         filterFields={this.state.rulesFilters}
                         sort_config={undefined}
-                        displayToggle={this.state.display_toggle}
                         actionsButtons={this.actionsButtons}
-                        queryType={['filter']}
+                        queryType={['filter', 'filter_host_id']}
+                        page={this.props.page}
                     />
                 </ErrorHandler>
                 <Spinner loading={this.state.loading}>
@@ -150,19 +158,21 @@ export default class AlertsPage extends React.Component {
                         // eslint-disable-next-line no-underscore-dangle
                         <ErrorHandler key={rule._id}>
                             {/* eslint-disable-next-line no-underscore-dangle */}
-                            <AlertItem key={rule._id} id={rule._id} data={rule._source} from_date={this.props.from_date} UpdateFilter={this.UpdateFilter} filters={this.props.filters} addFilter={this.addFilter} />
+                            <AlertItem key={rule._id} id={rule._id} data={rule._source} filterParams={this.props.filterParams} filters={this.props.filters} addFilter={this.props.addFilter} />
                         </ErrorHandler>
                     ))}
                 </ListView>
                 <ErrorHandler>
-                    <RuleToggleModal
+                    {this.state.action.view && <RuleToggleModal
                         show={this.state.action.view}
                         action={this.state.action.type}
                         config={this.props.rules_list}
                         filters={this.props.filters}
                         close={this.closeAction}
                         rulesets={this.state.rulesets}
-                    />
+                        systemSettings={this.props.systemSettings}
+                        filterParams={this.props.filterParams}
+                    />}
                 </ErrorHandler>
             </div>
         );
@@ -172,7 +182,10 @@ export default class AlertsPage extends React.Component {
 AlertsPage.propTypes = {
     rules_list: PropTypes.any,
     filters: PropTypes.any,
-    from_date: PropTypes.any,
+    filtersWithAlert: PropTypes.any,
     systemSettings: PropTypes.any,
     updateListState: PropTypes.any,
+    page: PropTypes.any,
+    addFilter: PropTypes.func,
+    filterParams: PropTypes.object.isRequired
 };

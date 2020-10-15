@@ -18,9 +18,10 @@ You should have received a copy of the GNU General Public License
 along with Scirius.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from __future__ import unicode_literals
+
 from django.core.management.base import BaseCommand, CommandError
-from rules.models import Ruleset, SourceAtVersion, Category
+from rules.models import Ruleset, Category
+
 
 class Command(BaseCommand):
     help = 'Remove a category from a ruleset'
@@ -30,20 +31,22 @@ class Command(BaseCommand):
         parser.add_argument('category', help='Category name')
 
     def handle(self, *args, **options):
-        name = options['ruleset']
+        ruleset_name = options['ruleset']
         catname = options['category']
-        
+
         try:
-            ruleset = Ruleset.objects.filter(name = ruleset)
+            ruleset = Ruleset.objects.filter(name=ruleset_name)
             ruleset = ruleset[0]
         except:
             raise CommandError("No ruleset with name '%s' is defined" % (ruleset))
+
         try:
-            categories = Category.objects.filter(name = catname)
+            categories = Category.objects.filter(name=catname)
         except:
             raise CommandError("No Category is defined")
+
         for cat in categories:
             ruleset.categories.remove(cat)
+
         ruleset.save()
         self.stdout.write('Successfully removed "%s" from ruleset "%s"' % (catname, ruleset))
-

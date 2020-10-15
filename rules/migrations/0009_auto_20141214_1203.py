@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-from __future__ import unicode_literals
+
 
 from django.db import models, migrations
+import django.db.models.deletion
 import datetime
 
 
@@ -20,7 +21,7 @@ class Migration(migrations.Migration):
                 ('set', models.BooleanField(default=False)),
                 ('isset', models.BooleanField(default=False)),
                 ('enable', models.BooleanField(default=True)),
-                ('source', models.ForeignKey(to='rules.Source')),
+                ('source', models.ForeignKey(to='rules.Source', on_delete=django.db.models.deletion.CASCADE)),
             ],
             options={
             },

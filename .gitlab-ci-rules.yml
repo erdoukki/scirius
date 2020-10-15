@@ -1,5 +1,4 @@
-image: $CI_REGISTRY/devel/scirius/iceweasel:latest
-
+image: stamus/stamus-docker-qa:chromium
 npm:
   image: node:8.9.4
   stage: build
@@ -9,6 +8,8 @@ npm:
     - rules/static/dist
     - rules/static/bundles
     - rules/static/webpack-stats.prod.json
+  before_script:
+  - echo "skip"
   script:
   - npm install
   - npm install -g webpack@3.11
@@ -21,15 +22,26 @@ npm:
 test-static:
   stage: test
   script:
-  - /home/admin/venv/bin/pylint --load-plugins pylint_django -E -d unexpected-keyword-arg,no-member,access-member-before-definition,no-name-in-module,import-error */*.py
-  - for f in $(find .  -type f -name "*.py" ! -name "__init__.py" ! -name "manage.py" ! -name "setup.py" ! -name "yaml.py" ! -name "lineinfile.py" -not -path "./doc/*" -not -path "./rules/south_migrations/*" -not -path "./suricata/south_migrations/*" -not -path "./accounts/south_migrations/*" -not -path "./node_modules/*" -not -path "./tests/*" -not -path "./hunt/*"); do if ! grep -q 'from __future__ import unicode_literals' $f ; then echo "$f does not contain unicode_literals import"; exit 1;  fi; done
+  - /home/admin/venv/bin/pylint --load-plugins pylint_django -E -d unexpected-keyword-arg,no-member,access-member-before-definition,no-name-in-module,import-error,imported-auth-user */*.py
+  - PYTHONIOENCODING="UTF-8" ./tests/check_non_ascii_chars.py
 
 eslint_check:
   image: node:8.9.4
   stage: custom
   when: manual
+  before_script:
+  - echo "skip"
   script:
   - cd hunt
   - npm install
   - cd ..
   - python tests/eslint_check.py $(find hunt -name \*.js |grep -v /node_modules/)
+
+test-dlint:
+    image: python
+    before_script:
+        - python -m pip install dlint
+    script:
+        - python -m flake8 --select=DUO rules
+        - python -m flake8 --select=DUO suricata
+        - python -m flake8 --ignore=E501,E722,W504 --exclude=rules/migrations,rules/south_migrations,tests/docker/,accounts/south_migrations,suricata/south_migrations,suricata/migrations rules suricata accounts scirius

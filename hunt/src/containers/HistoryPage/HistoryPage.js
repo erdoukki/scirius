@@ -24,11 +24,12 @@ import PropTypes from 'prop-types';
 import { ListView, Spinner, PAGINATION_VIEW } from 'patternfly-react';
 import axios from 'axios';
 import * as config from 'hunt_common/config/Api';
-import { HuntFilter } from '../../HuntFilter';
+import { sections } from 'hunt_common/constants';
+import HuntFilter from '../../HuntFilter';
 import HistoryItem from '../../components/HistoryItem';
 import HuntPaginationRow from '../../HuntPaginationRow';
 import ErrorHandler from '../../components/Error';
-import { buildFilter, buildListUrlParams, UpdateFilter, loadActions, UpdateSort, onFirstPage, onNextPage, onPrevPage, onLastPage, handlePaginationChange } from '../../helpers/common';
+import { buildFilter, buildListUrlParams, loadActions } from '../../helpers/common';
 
 const HistorySortFields = [
     {
@@ -75,52 +76,46 @@ export default class HistoryPage extends React.Component {
         this.fetchData = this.fetchData.bind(this);
         this.buildFilter = buildFilter;
         this.buildListUrlParams = buildListUrlParams.bind(this);
-        this.UpdateFilter = UpdateFilter.bind(this);
         this.loadActions = loadActions.bind(this);
-        this.UpdateSort = UpdateSort.bind(this);
-        this.onFirstPage = onFirstPage.bind(this);
-        this.onNextPage = onNextPage.bind(this);
-        this.onPrevPage = onPrevPage.bind(this);
-        this.onLastPage = onLastPage.bind(this);
-        this.handlePaginationChange = handlePaginationChange.bind(this);
+        this.updateHistoryListState = this.updateHistoryListState.bind(this);
 
         this.props.getActionTypes();
     }
 
     componentDidMount() {
-        this.fetchData(this.props.rules_list, this.props.filters);
+        this.fetchData();
     }
 
     componentDidUpdate(prevProps) {
-        if (prevProps.from_date !== this.props.from_date) {
-            this.fetchData(this.props.rules_list, this.props.filters);
+        if (JSON.stringify(prevProps.filters) !== JSON.stringify(this.props.filters)) {
+            this.fetchData();
         }
         if (prevProps.actionTypesList.length !== this.props.actionTypesList.length) {
             const filterFields = [...this.state.filterFields];
             filterFields.find((field) => field.id === 'action_type').filterValues = this.props.actionTypesList;
             // eslint-disable-next-line react/no-did-update-set-state
             this.setState({
-                ...this.state,
                 filterFields
             });
         }
     }
 
-    fetchData(historyStat, filters) {
-        const stringFilters = this.buildFilter(filters);
-        this.setState({ refresh_data: true, loading: true });
-        axios.get(`${config.API_URL}${config.HISTORY_PATH}?${this.buildListUrlParams(historyStat)}${stringFilters}`)
+    fetchData() {
+        const stringFilters = this.buildFilter(this.props.filters);
+        const listParams = this.buildListUrlParams(this.props.rules_list);
+        this.setState({ loading: true });
+        axios.get(`${config.API_URL}${config.HISTORY_PATH}?${listParams}${stringFilters}`)
         .then((res) => {
             this.setState({
-                data: res.data, count: res.data.count, refresh_data: false, loading: false
+                data: res.data, count: res.data.count, loading: false
             });
         }).catch(() => {
-            this.setState({ refresh_data: false, loading: false });
+            this.setState({ loading: false });
         });
     }
 
-    updateRuleListState(rulesListState) {
-        this.props.updateListState(rulesListState);
+    updateHistoryListState(rulesListState) {
+        this.props.updateListState(rulesListState, () => this.fetchData());
     }
 
     render() {
@@ -134,17 +129,15 @@ export default class HistoryPage extends React.Component {
         return (
             <div className="HistoryList HuntList">
                 <ErrorHandler>
-                    <HuntFilter ActiveFilters={this.props.filters}
+                    <HuntFilter
                         config={this.props.rules_list}
-                        ActiveSort={this.props.rules_list.sort}
-                        UpdateFilter={this.UpdateFilter}
-                        UpdateSort={this.UpdateSort}
-                        setViewType={this.setViewType}
+                        itemsListUpdate={this.updateHistoryListState}
                         filterFields={this.state.filterFields}
                         sort_config={HistorySortFields}
-                        displayToggle={false}
                         queryType={['all']}
-                        got_alert_tag={false}
+                        gotAlertTag={false}
+                        page={this.props.page}
+                        filterType={sections.HISTORY}
                     />
                 </ErrorHandler>
                 <Spinner loading={this.state.loading}>
@@ -160,17 +153,9 @@ export default class HistoryPage extends React.Component {
                 <ErrorHandler>
                     <HuntPaginationRow
                         viewType={PAGINATION_VIEW.LIST}
-                        pagination={this.props.rules_list.pagination}
-                        onPaginationChange={this.handlePaginationChange}
-                        amountOfPages={Math.ceil(this.state.count / this.props.rules_list.pagination.perPage)}
-                        pageInputValue={this.props.rules_list.pagination.page}
-                        itemCount={this.state.count - 1} // used as last item
-                        itemsStart={(this.props.rules_list.pagination.page - 1) * this.props.rules_list.pagination.perPage}
-                        itemsEnd={Math.min((this.props.rules_list.pagination.page * this.props.rules_list.pagination.perPage) - 1, this.state.count - 1)}
-                        onFirstPage={this.onFirstPage}
-                        onNextPage={this.onNextPage}
-                        onPreviousPage={this.onPrevPage}
-                        onLastPage={this.onLastPage}
+                        onPaginationChange={this.updateHistoryListState}
+                        itemsCount={this.state.count}
+                        itemsList={this.props.rules_list}
                     />
                 </ErrorHandler>
             </div>
@@ -182,8 +167,8 @@ HistoryPage.propTypes = {
     rules_list: PropTypes.any,
     filters: PropTypes.any,
     switchPage: PropTypes.any,
-    from_date: PropTypes.any,
     updateListState: PropTypes.any,
     getActionTypes: PropTypes.func,
     actionTypesList: PropTypes.array,
+    page: PropTypes.any,
 };

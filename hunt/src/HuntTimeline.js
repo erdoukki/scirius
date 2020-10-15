@@ -2,7 +2,8 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import axios from 'axios';
 import * as config from 'hunt_common/config/Api';
-import { buildQFilter } from './helpers/buildQFilter';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
 import SciriusChart from './components/SciriusChart';
 import ErrorHandler from './components/Error';
 
@@ -18,18 +19,15 @@ export default class HuntTimeline extends React.Component {
     }
 
     componentDidUpdate(prevProps) {
-        if ((prevProps.from_date !== this.props.from_date) || (prevProps.filters !== this.props.filters)) {
+        if (JSON.stringify(prevProps) !== JSON.stringify(this.props)) {
             this.fetchData();
         }
     }
 
     fetchData() {
-        let stringFilters = '';
         const qfilter = buildQFilter(this.props.filters, this.props.systemSettings);
-        if (qfilter) {
-            stringFilters += `&filter=${qfilter.replace('&qfilter=', '')}`;
-        }
-        axios.get(`${config.API_URL}${config.ES_BASE_PATH}timeline/?hosts=*&from_date=${this.props.from_date}${stringFilters}`)
+        const filterParams = buildFilterParams(this.props.filterParams);
+        axios.get(`${config.API_URL}${config.ES_BASE_PATH}timeline/?hosts=*&target=${this.props.chartTarget}&${filterParams}${qfilter}`)
         .then((res) => {
             /* iterate on actual row: build x array, for each row build hash x -> value */
             /* sort x array */
@@ -76,7 +74,17 @@ export default class HuntTimeline extends React.Component {
             if (putindrows.length === 1) {
                 putindrows = [];
             }
-            this.setState({ data: { x: 'x', columns: putindrows } });
+
+            const data = { data: { x: 'x', columns: putindrows } };
+
+            if (this.props.chartTarget) {
+                data.data.colors = {
+                    relevant: '#fbde00',
+                    informational: '#675d5c',
+                    untagged: '#7b1244'
+                };
+            }
+            this.setState(data);
         });
     }
 
@@ -84,7 +92,7 @@ export default class HuntTimeline extends React.Component {
         return (
             <div style={{ ...this.props.style }}>
                 {this.state.data && <ErrorHandler><SciriusChart data={this.state.data}
-                    axis={{ x: { min: this.props.from_date } }}
+                    axis={{ x: { min: this.props.filterParams.fromDate, max: this.props.filterParams.toDate } }}
                     padding={{ bottom: 15 }}
                     size={{ height: 200 }}
                 /></ErrorHandler>}
@@ -100,6 +108,7 @@ HuntTimeline.defaultProps = {
 HuntTimeline.propTypes = {
     filters: PropTypes.any,
     systemSettings: PropTypes.any,
-    from_date: PropTypes.any,
     style: PropTypes.object,
+    chartTarget: PropTypes.bool,
+    filterParams: PropTypes.object.isRequired
 };

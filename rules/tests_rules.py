@@ -1,5 +1,5 @@
 """
-Copyright(C) 2018 Stamus Networks
+Copyright(C) 2018-2020 Stamus Networks
 Written by Eric Leblond <eleblond@stamus-networks.com>
 
 This file is part of Scirius.
@@ -18,23 +18,25 @@ You should have received a copy of the GNU General Public License
 along with Scirius.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from __future__ import unicode_literals
-import psutil
+
 import subprocess
 import tempfile
 import shutil
 import os
 import json
-import StringIO
+import io
 import re
 
 from django.utils.html import escape
+from django.conf import settings
+
 
 class TestRules():
     VARIABLE_ERROR = 101
-    OPENING_RULE_FILE = 41 # Error when opening a file referenced in the source
-    RULEFILE_ERRNO = [ 39, 42 ]
-    USELESS_ERRNO = [ 40, 43, 44 ]
+    OPENING_RULE_FILE = 41  # Error when opening a file referenced in the source
+    OPENING_DATASET_FILE = 322  # Error when opening a dataset referenced in the source
+    RULEFILE_ERRNO = [39, 42]
+    USELESS_ERRNO = [40, 43, 44]
     CONFIG_FILE = """
 %YAML 1.1
 ---
@@ -71,6 +73,10 @@ vars:
     SSH_PORTS: 22
     DNP3_PORTS: 20000
     MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
 """
 
     REFERENCE_CONFIG = """
@@ -140,33 +146,50 @@ config classification: icmp-event,Generic ICMP event,3
 config classification: kickass-porn,SCORE! Get the lotion!,1
 config classification: policy-violation,Potential Corporate Privacy Violation,1
 config classification: default-login-attempt,Attempt to login by a default username and password,2
+
+config classification: targeted-activity,Targeted Malicious Activity was Detected,1
+config classification: exploit-kit,Exploit Kit Activity Detected,1
+config classification: external-ip-check,Device Retrieving External IP Address Detected,2
+config classification: domain-c2,Domain Observed Used for C2 Detected,1
+config classification: pup-activity,Possibly Unwanted Program Detected,2
+config classification: credential-theft,Successful Credential Theft Detected,1
+config classification: social-engineering,Possible Social Engineering Attempted,2
+config classification: coin-mining,Crypto Currency Mining Activity Detected,2
+config classification: command-and-control,Malware Command and Control Activity Detected,1
 """
 
-    def parse_suricata_error(self, error, single = False):
+    def parse_suricata_error(self, error, single=False):
         ret = {
             'errors': [],
             'warnings': [],
         }
-        error_list = []
-        warning_list = []
         variable_list = []
         files_list = []
-        error_stream = StringIO.StringIO(error)
+        ignore_next = False
+        error_stream = io.StringIO(error)
         for line in error_stream:
             try:
                 s_err = json.loads(line)
-            except:
+            except Exception:
                 ret['errors'].append({'message': error, 'format': 'raw'})
                 return ret
             errno = s_err['engine']['error_code']
             if not single or errno not in self.RULEFILE_ERRNO:
                 if errno == self.VARIABLE_ERROR:
                     variable = s_err['engine']['message'].split("\"")[1]
-                    if not "$" + variable  in variable_list:
+                    if not "$" + variable in variable_list:
                         variable_list.append("$" + variable)
                         s_err['engine']['message'] = "Custom address variable \"$%s\" is used and need to be defined in probes configuration" % (variable)
                         ret['warnings'].append(s_err['engine'])
                     continue
+                if errno == self.OPENING_DATASET_FILE:
+                    m = re.match('fopen \'([^:]*)\' failed: No such file or directory', s_err['engine']['message'])
+                    if m is not None:
+                        datasource = m.group(1)
+                        s_err['engine']['message'] = 'Dataset source "%s" is a dependancy and needs to be added to rulesets' % datasource
+                        ret['warnings'].append(s_err['engine'])
+                        ignore_next = True
+                        continue
                 if errno == self.OPENING_RULE_FILE:
                     m = re.match('opening hash file ([^:]*): No such file or directory', s_err['engine']['message'])
                     if m is not None:
@@ -176,10 +199,16 @@ config classification: default-login-attempt,Attempt to login by a default usern
                         s_err['engine']['message'] = 'External file "%s" is a dependancy and needs to be added to rulesets' % filename
                         ret['warnings'].append(s_err['engine'])
                         continue
-                if not errno in self.USELESS_ERRNO:
+                if errno not in self.USELESS_ERRNO:
                     # clean error message
                     if errno == 39:
-                        # exclude error on varible
+                        if 'failed to set up dataset' in s_err['engine']['message']:
+                            if ignore_next:
+                                continue
+                        if ignore_next:
+                            ignore_next = False
+                            continue
+                        # exclude error on variable
                         found = False
                         for variable in variable_list:
                             if variable in s_err['engine']['message']:
@@ -193,26 +222,23 @@ config classification: default-login-attempt,Attempt to login by a default usern
                                     break
                         if found:
                             continue
-                        s_err['engine']['message'] = s_err['engine']['message'].split(' from file')[0] 
-                        getsid = re.compile("sid *:(\d+)")
+                        s_err['engine']['message'] = s_err['engine']['message'].split(' from file')[0]
+                        getsid = re.compile(r"sid *:(\d+)")
                         match = getsid.search(line)
                         if match:
                             s_err['engine']['sid'] = int(match.groups()[0])
                     if errno == 42:
-                        s_err['engine']['message'] =  s_err['engine']['message'].split(' from')[0] 
+                        s_err['engine']['message'] = s_err['engine']['message'].split(' from')[0]
                     ret['errors'].append(s_err['engine'])
         return ret
 
-    def rule_buffer(self, rule_buffer, config_buffer = None, related_files = None, reference_config = None, classification_config = None):
+    def rule_buffer(self, rule_buffer, config_buffer=None, related_files=None, reference_config=None, classification_config=None, cats_content='', iprep_content=''):
         # create temp directory
         tmpdir = tempfile.mkdtemp()
         # write the rule file in temp dir
         rule_file = os.path.join(tmpdir, "file.rules")
         rf = open(rule_file, 'w')
-        try:
-            rf.write(rule_buffer)
-        except UnicodeEncodeError:
-            rf.write(rule_buffer.encode('utf-8'))
+        rf.write(rule_buffer)
         rf.close()
 
         if not reference_config:
@@ -254,18 +280,18 @@ config classification: default-login-attempt,Attempt to login by a default usern
             rf.close()
 
         from rules.models import export_iprep_files
-        export_iprep_files(tmpdir)
-            
-        suri_cmd = ['suricata', '-T', '-l', tmpdir, '-S', rule_file, '-c', config_file]
+        export_iprep_files(tmpdir, cats_content, iprep_content)
+
+        suri_cmd = [settings.SURICATA_BINARY, '-T', '-l', tmpdir, '-S', rule_file, '-c', config_file]
         # start suricata in test mode
-        suriprocess = subprocess.Popen(suri_cmd , stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        suriprocess = subprocess.Popen(suri_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         (outdata, errdata) = suriprocess.communicate()
         shutil.rmtree(tmpdir)
         # if success ok
         if suriprocess.returncode == 0:
             return {'status': True, 'errors': ''}
         # if not return error
-        return {'status': False, 'errors': errdata}
+        return {'status': False, 'errors': errdata.decode('utf-8')}
 
     def _escape_result(self, res):
         for key in ('warnings', 'errors'):
@@ -274,29 +300,33 @@ config classification: default-login-attempt,Attempt to login by a default usern
                 msg['message'] = escape(msg['message'])
         return res
 
-    def check_rule_buffer(self, rule_buffer, config_buffer = None, related_files = None, single = False):
+    def check_rule_buffer(self, rule_buffer, config_buffer=None, related_files=None, single=False, cats_content='', iprep_content=''):
         related_files = related_files or {}
-        prov_result = self.rule_buffer(rule_buffer, config_buffer = config_buffer, related_files = related_files)
-        if prov_result['status'] and not prov_result.has_key('warnings'):
+        prov_result = self.rule_buffer(rule_buffer, config_buffer=config_buffer, related_files=related_files, cats_content=cats_content, iprep_content=iprep_content)
+        if prov_result['status'] and 'warnings' not in prov_result:
             return self._escape_result(prov_result)
-        res = self.parse_suricata_error(prov_result['errors'], single = single)
+        res = self.parse_suricata_error(prov_result['errors'], single=single)
         prov_result['errors'] = res['errors']
         prov_result['warnings'] = res['warnings']
-        i = 6 # support only 6 unknown variables per rule
-        prov_result['iter'] = 0;
+        i = 6  # support only 6 unknown variables per rule
+        prov_result['iter'] = 0
         while len(res['warnings']) and i > 0:
             modified = False
             for warning in res['warnings']:
                 if warning['error_code'] == self.VARIABLE_ERROR:
                     var = warning['message'].split("\"")[1]
                     # transform rule_buffer to remove the faulty variable
-                    rule_buffer = rule_buffer.replace("!" + var, "any");
-                    rule_buffer = rule_buffer.replace(var, "any");
+                    if not var.endswith('_PORTS') and not var.endswith('_PORT'):
+                        rule_buffer = rule_buffer.replace("!" + var, "192.0.2.0/24")
+                        rule_buffer = rule_buffer.replace(var, "192.0.2.0/24")
+                    else:
+                        rule_buffer = rule_buffer.replace("!" + var, "21")
+                        rule_buffer = rule_buffer.replace(var, "21")
                     modified = True
-            if modified == False:
+            if modified is False:
                 break
-            result = self.rule_buffer(rule_buffer, config_buffer = config_buffer, related_files = related_files)
-            res = self.parse_suricata_error(result['errors'], single = single)
+            result = self.rule_buffer(rule_buffer, config_buffer=config_buffer, related_files=related_files, cats_content=cats_content, iprep_content=iprep_content)
+            res = self.parse_suricata_error(result['errors'], single=single)
             prov_result['errors'] = res['errors']
             if len(res['warnings']):
                 prov_result['warnings'] = prov_result['warnings'] + res['warnings']
@@ -305,12 +335,3 @@ config classification: default-login-attempt,Attempt to login by a default usern
         if len(prov_result['errors']) == 0:
             prov_result['status'] = True
         return self._escape_result(prov_result)
-
-    def rule(self, rule_buffer, config_buffer = None, related_files = None):
-        related_files = related_files or {}
-        return self.check_rule_buffer(rule_buffer, config_buffer = config_buffer, related_files = related_files, single = True)
-
-    def rules(self, rule_buffer, config_buffer = None, related_files = None):
-        related_files = related_files or {}
-        return self.check_rule_buffer(rule_buffer, config_buffer = config_buffer, related_files = related_files, single = False)
-

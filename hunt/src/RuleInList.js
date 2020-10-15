@@ -1,11 +1,14 @@
 /* eslint-disable react/no-danger */
 import React from 'react';
 import PropTypes from 'prop-types';
+import { connect } from 'react-redux';
 import { Badge, ListGroup, ListGroupItem } from 'react-bootstrap';
 import { Col, Icon, Row, Spinner, ListViewIcon, ListViewInfoItem, ListViewItem } from 'patternfly-react';
+import { sections } from 'hunt_common/constants';
 import RuleEditKebab from './components/RuleEditKebab';
 import SciriusChart from './components/SciriusChart';
 import EventValue from './components/EventValue';
+import { addFilter } from './containers/App/stores/global';
 
 const RuleInList = (props) => {
     const { category } = props.data;
@@ -18,8 +21,8 @@ const RuleInList = (props) => {
     return (
         <ListViewItem
             key={props.data.sid}
-            // eslint-disable-next-line jsx-a11y/click-events-have-key-events,jsx-a11y/no-static-element-interactions,jsx-a11y/interactive-supports-focus
-            actions={[<a role="button" key={`actions-${props.data.sid}`} onClick={() => { props.switchPage(props.data); }}><Icon type="fa" name="search-plus" /> </a>, <RuleEditKebab key={`kebab-${props.data.sid}`} config={kebabConfig} rulesets={props.rulesets} />]}
+            // eslint-disable-next-line jsx-a11y/click-events-have-key-events,jsx-a11y/interactive-supports-focus
+            actions={[<a role="button" key={`actions-${props.data.sid}`} onClick={() => props.addFilter(sections.GLOBAL, { id: 'alert.signature_id', value: props.data.sid, negated: false })}><Icon type="fa" name="search-plus" /> </a>, <RuleEditKebab key={`kebab-${props.data.sid}`} config={kebabConfig} rulesets={props.rulesets} />]}
             leftContent={<ListViewIcon name="security" className="pficon pficon-security" />}
             additionalInfo={[<ListViewInfoItem key={`created-${props.data.sid}`}><p>Created: {props.data.created}</p></ListViewInfoItem>,
                 <ListViewInfoItem key={`updated-${props.data.sid}`}><p>Updated: {props.data.updated}</p></ListViewInfoItem>,
@@ -37,8 +40,11 @@ const RuleInList = (props) => {
                         </div>
                         <div className="row">
                             <div className="col-md-12">
-                                <SciriusChart data={props.data.timeline}
-                                    axis={{ x: { min: props.from_date } }}
+                                <SciriusChart
+                                    data={props.data.timeline}
+                                    axis={{ x: { min: props.filterParams.fromDate, max: props.filterParams.toDate } }}
+                                    legend={{ show: false }}
+                                    padding={{ bottom: 10 }}
                                 />
                             </div>
                         </div>
@@ -48,7 +54,7 @@ const RuleInList = (props) => {
                                 <ListGroup>
                                     {props.data.probes.map((item) => (
                                         <ListGroupItem key={item.probe}>
-                                            <EventValue field={'host'} value={item.probe} addFilter={props.addFilter} right_info={<Badge>{item.hits}</Badge>} />
+                                            <EventValue field={'host'} value={item.probe} right_info={<Badge>{item.hits}</Badge>} />
                                         </ListGroupItem>))}
                                 </ListGroup>
                             </div>
@@ -64,9 +70,12 @@ RuleInList.propTypes = {
     data: PropTypes.any,
     sources: PropTypes.any,
     rulesets: PropTypes.any,
-    from_date: PropTypes.any,
-    switchPage: PropTypes.any,
+    filterParams: PropTypes.object.isRequired,
     addFilter: PropTypes.any,
 };
 
-export default RuleInList;
+const mapDispatchToProps = {
+    addFilter
+};
+
+export default connect(null, mapDispatchToProps)(RuleInList);

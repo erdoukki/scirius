@@ -28,13 +28,14 @@ import VerticalNavItems from 'hunt_common/components/VerticalNavItems';
 import DisplayPage from 'hunt_common/components/DisplayPage';
 import { PAGE_STATE } from 'hunt_common/constants';
 import * as config from 'hunt_common/config/Api';
-import UserNavInfo from '../../components/UserNavInfo';
+import UserNavInfo from 'hunt_common/containers/UserNavInfo';
 import EmitEvent from '../../helpers/EmitEvent';
 import '../../pygments.css';
 import '../../css/App.css';
-import sciriusLogo from '../../img/scirius-by-stamus.svg';
+import sciriusLogo from '../../img/stamus.png';
 import keymap from '../../Keymap';
 import ErrorHandler from '../../components/Error';
+import storage from '../../helpers/storage';
 
 const shortcutManager = new ShortcutManager(keymap);
 
@@ -42,18 +43,13 @@ export default class App extends Component {
     constructor(props) {
         super(props);
         this.timer = null;
-        const interval = localStorage.getItem('interval');
-        let duration = localStorage.getItem('duration');
-        let rulesListConf = localStorage.getItem('rules_list');
-        let alertsListConf = localStorage.getItem('alerts_list');
-        let historyConf = localStorage.getItem('history');
-        let filtersListConf = localStorage.getItem('filters_list');
-        let pageDisplay = localStorage.getItem('page_display');
-        let idsFilters = localStorage.getItem('ids_filters');
-        let historyFilters = localStorage.getItem('history_filters');
-        if (!duration) {
-            duration = 24;
-        }
+        const interval = storage.getItem('interval');
+        let rulesListConf = storage.getItem('rules_list');
+        let alertsListConf = storage.getItem('alerts_list');
+        let historyConf = storage.getItem('history');
+        let filtersListConf = storage.getItem('filters_list');
+        let pageDisplay = storage.getItem('page_display');
+        let historyFilters = storage.getItem('history_filters');
 
         if (!rulesListConf) {
             rulesListConf = {
@@ -65,7 +61,7 @@ export default class App extends Component {
                 sort: { id: 'created', asc: false },
                 view_type: 'list'
             };
-            localStorage.setItem('rules_list', JSON.stringify(rulesListConf));
+            storage.setItem('rules_list', JSON.stringify(rulesListConf));
         } else {
             rulesListConf = JSON.parse(rulesListConf);
             // Sanity checks for the object retrieved from local storage
@@ -93,7 +89,7 @@ export default class App extends Component {
                 sort: { id: 'timestamp', asc: false },
                 view_type: 'list'
             };
-            localStorage.setItem('alerts_list', JSON.stringify(alertsListConf));
+            storage.setItem('alerts_list', JSON.stringify(alertsListConf));
         } else {
             alertsListConf = JSON.parse(alertsListConf);
         }
@@ -108,7 +104,7 @@ export default class App extends Component {
                 sort: { id: 'timestamp', asc: false },
                 view_type: 'list'
             };
-            localStorage.setItem('filters_list', JSON.stringify(filtersListConf));
+            storage.setItem('filters_list', JSON.stringify(filtersListConf));
         } else {
             filtersListConf = JSON.parse(filtersListConf);
         }
@@ -123,59 +119,40 @@ export default class App extends Component {
                 sort: { id: 'date', asc: false },
                 view_type: 'list'
             };
-            localStorage.setItem('history', JSON.stringify(historyConf));
+            storage.setItem('history', JSON.stringify(historyConf));
         } else {
             historyConf = JSON.parse(historyConf);
         }
 
-        if (!idsFilters) {
-            idsFilters = [];
-            localStorage.setItem('ids_filters', JSON.stringify(idsFilters));
-        } else {
-            idsFilters = JSON.parse(idsFilters);
-        }
-
         if (!historyFilters) {
             historyFilters = [];
-            localStorage.setItem('history_filters', JSON.stringify(historyFilters));
+            storage.setItem('history_filters', JSON.stringify(historyFilters));
         } else {
             historyFilters = JSON.parse(historyFilters);
         }
 
         if (!pageDisplay) {
             pageDisplay = { page: PAGE_STATE.dashboards, item: undefined };
-            localStorage.setItem('page_display', JSON.stringify(pageDisplay));
+            storage.setItem('page_display', JSON.stringify(pageDisplay));
         } else {
             pageDisplay = JSON.parse(pageDisplay);
         }
         this.state = {
-            sources: [],
-            rulesets: [],
-            duration,
-            from_date: (Date.now() - (duration * 3600 * 1000)),
             interval,
             display: pageDisplay,
             rules_list: rulesListConf,
             alerts_list: alertsListConf,
-            idsFilters,
             history: historyConf,
             historyFilters,
             filters_list: filtersListConf,
             hasConnectivity: true,
             connectionProblem: 'Scirius is not currently available.',
         };
-        this.displaySource = this.displaySource.bind(this);
-        this.displayRuleset = this.displayRuleset.bind(this);
-        this.changeDuration = this.changeDuration.bind(this);
         this.changeRefreshInterval = this.changeRefreshInterval.bind(this);
-
-        this.fromDate = this.fromDate.bind(this);
-
         this.switchPage = this.switchPage.bind(this);
         this.needReload = this.needReload.bind(this);
         this.updateRuleListState = this.updateRuleListState.bind(this);
         this.updateAlertListState = this.updateAlertListState.bind(this);
-        this.updateIDSFilterState = this.updateIDSFilterState.bind(this);
         this.updateHistoryListState = this.updateHistoryListState.bind(this);
         this.updateHistoryFilterState = this.updateHistoryFilterState.bind(this);
         this.updateFilterListState = this.updateFilterListState.bind(this);
@@ -187,18 +164,9 @@ export default class App extends Component {
 
     componentDidMount() {
         setInterval(this.get_scirius_status, 10000);
-        axios.all([
-            axios.get(config.API_URL + config.SOURCE_PATH),
-            axios.get(config.API_URL + config.RULESET_PATH),
-            axios.get(config.API_URL + config.SYSTEM_SETTINGS_PATH),
-        ])
-        .then(axios.spread((SrcRes, RulesetRes, systemSettings) => {
-            this.setState({
-                rulesets: RulesetRes.data.results,
-                sources: SrcRes.data.results,
-                systemSettings: systemSettings.data
-            });
-        }));
+        axios.get(config.API_URL + config.SYSTEM_SETTINGS_PATH).then((systemSettings) => {
+            this.setState({ systemSettings: systemSettings.data });
+        });
 
         if (this.state.interval) {
             this.timer = setInterval(this.needReload, this.state.interval * 1000);
@@ -206,30 +174,12 @@ export default class App extends Component {
     }
 
     needReload() {
-        this.setState({ from_date: (Date.now() - (this.state.duration * 3600 * 1000)) });
-    }
-
-    fromDate = (period) => {
-        const duration = period * 3600 * 1000;
-        return Date.now() - duration;
-    }
-
-    displayRuleset(ruleset) {
-        this.switchPage(PAGE_STATE.ruleset, ruleset);
-    }
-
-    displaySource(source) {
-        this.switchPage(PAGE_STATE.source, source);
-    }
-
-    changeDuration(period) {
-        this.setState({ duration: period, from_date: this.fromDate(period) });
-        localStorage.setItem('duration', period);
+        this.props.reload();
     }
 
     changeRefreshInterval(interval) {
-        this.setState({ ...this.state, interval });
-        localStorage.setItem('interval', interval);
+        this.setState({ interval });
+        storage.setItem('interval', interval);
 
         if (interval) {
             if (this.timer) {
@@ -247,48 +197,38 @@ export default class App extends Component {
         if (!page) {
             return;
         }
-        if (page === PAGE_STATE.rules_list && item !== undefined) {
-            this.updateIDSFilterState([{
-                label: `Signature ID: ${item}`,
-                id: 'alert.signature_id',
-                value: item,
-                negated: false,
-                query: 'filter'
-            }]);
-        }
         const pageDisplay = { page, item };
         this.setState({ display: pageDisplay });
-        localStorage.setItem('page_display', JSON.stringify(pageDisplay));
+        storage.setItem('page_display', JSON.stringify(pageDisplay));
+
+        if (this.props.duration) {
+            this.props.reload();
+        }
     }
 
-    updateRuleListState(rulesListState) {
-        this.setState({ rules_list: rulesListState });
-        localStorage.setItem('rules_list', JSON.stringify(rulesListState));
+    updateRuleListState(rulesListState, fetchDataCallback) {
+        this.setState({ rules_list: rulesListState }, fetchDataCallback);
+        storage.setItem('rules_list', JSON.stringify(rulesListState));
     }
 
-    updateAlertListState(alertsListState) {
-        this.setState({ alerts_list: alertsListState });
-        localStorage.setItem('alerts_list', JSON.stringify(alertsListState));
+    updateAlertListState(alertsListState, fetchDataCallback) {
+        this.setState({ alerts_list: alertsListState }, fetchDataCallback);
+        storage.setItem('alerts_list', JSON.stringify(alertsListState));
     }
 
-    updateFilterListState(filtersListState) {
-        this.setState({ filters_list: filtersListState });
-        localStorage.setItem('filters_list', JSON.stringify(filtersListState));
+    updateFilterListState(filtersListState, fetchDataCallback) {
+        this.setState({ filters_list: filtersListState }, fetchDataCallback);
+        storage.setItem('filters_list', JSON.stringify(filtersListState));
     }
 
-    updateIDSFilterState(filters) {
-        this.setState({ idsFilters: filters });
-        localStorage.setItem('ids_filters', JSON.stringify(filters));
+    updateHistoryFilterState(filters, fetchDataCallback) {
+        this.setState({ historyFilters: filters }, fetchDataCallback);
+        storage.setItem('history_filters', JSON.stringify(filters));
     }
 
-    updateHistoryFilterState(filters) {
-        this.setState({ historyFilters: filters });
-        localStorage.setItem('history_filters', JSON.stringify(filters));
-    }
-
-    updateHistoryListState(historyState) {
-        this.setState({ history: historyState });
-        localStorage.setItem('history', JSON.stringify(historyState));
+    updateHistoryListState(historyState, fetchDataCallback) {
+        this.setState({ history: historyState }, fetchDataCallback);
+        storage.setItem('history', JSON.stringify(historyState));
     }
 
     get_scirius_status = () => {
@@ -300,20 +240,17 @@ export default class App extends Component {
             if (!data) {
                 if (this.state.hasConnectivity) {
                     this.setState({
-                        ...this.state,
                         hasConnectivity: false
                     });
                 }
             } else {
                 if (data.data.status === 'green' && !this.state.hasConnectivity) {
                     this.setState({
-                        ...this.state,
                         hasConnectivity: true
                     });
                 }
                 if (data.data.status !== 'green' && this.state.hasConnectivity) {
                     this.setState({
-                        ...this.state,
                         hasConnectivity: false,
                         connectionProblem: 'Scirius does not feel comfortable',
                     });
@@ -322,7 +259,6 @@ export default class App extends Component {
         }).catch(() => {
             if (this.state.hasConnectivity) {
                 this.setState({
-                    ...this.state,
                     hasConnectivity: false,
                     connectionProblem: 'No connection with scirius. This pop-up will disappear if connection is restored.',
                 });
@@ -341,19 +277,23 @@ export default class App extends Component {
         return (
             <div className="layout-pf layout-pf-fixed faux-layout">
                 <VerticalNav sessionKey="storybookItemsAsJsx" showBadges onCollapse={this.adjustDashboardWidth} onExpand={this.adjustDashboardWidth}>
-                    <VerticalNav.Masthead title="Scirius">
-                        <VerticalNav.Brand titleImg={sciriusLogo} />
+                    <VerticalNav.Masthead>
+                        <VerticalNav.Brand>
+                            <img src={sciriusLogo} height={32} width={116} style={{ marginTop: 7, marginBottom: -7, marginLeft: 20, display: 'block', float: 'left' }} alt="logo" />
+                            <div style={{ fontSize: '20px', float: 'left', paddingLeft: '40px', paddingTop: '11px', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'" }}>
+                                {process.env.REACT_APP_HAS_TAG === '1' ? <React.Fragment>Scirius Enriched Hunting</React.Fragment> : <React.Fragment>Suricata Threat Hunting</React.Fragment>}
+                            </div>
+                        </VerticalNav.Brand>
 
                         <VerticalNav.IconBar>
                             <ErrorHandler>
                                 <UserNavInfo
                                     systemSettings={this.state.systemSettings}
-                                    ChangeDuration={this.changeDuration}
                                     ChangeRefreshInterval={this.changeRefreshInterval}
                                     interval={this.state.interval}
-                                    period={this.state.duration}
                                     switchPage={this.switchPage}
                                     needReload={this.needReload}
+                                    duration={this.props.duration}
                                 />
                             </ErrorHandler>
                         </VerticalNav.IconBar>
@@ -376,11 +316,8 @@ export default class App extends Component {
                                     page={this.state.display.page}
                                     systemSettings={this.state.systemSettings}
                                     rules_list={this.state.rules_list}
-                                    idsFilters={this.state.idsFilters}
-                                    from_date={this.state.from_date}
                                     switchPage={this.switchPage}
                                     updateRuleListState={this.updateRuleListState}
-                                    updateIDSFilterState={this.updateIDSFilterState}
                                     item={this.state.display.item}
                                     needReload={this.needReload}
                                     history_list={this.state.history}
@@ -390,7 +327,6 @@ export default class App extends Component {
                                     alerts_list={this.state.alerts_list}
                                     updateAlertListState={this.updateAlertListState}
                                     filters_list={this.state.filters_list}
-                                    filters_filters={this.state.filters_filters}
                                     updateFilterListState={this.updateFilterListState}
                                     updateFiltersFilterState={this.updateFiltersFilterState}
                                     updateHostListState={this.updateHostListState}
@@ -417,3 +353,8 @@ export default class App extends Component {
 App.childContextTypes = {
     shortcuts: PropTypes.object.isRequired
 };
+
+App.propTypes = {
+    reload: PropTypes.func.isRequired,
+    duration: PropTypes.any,
+}

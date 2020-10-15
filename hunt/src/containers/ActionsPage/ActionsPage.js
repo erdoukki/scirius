@@ -24,19 +24,30 @@ import PropTypes from 'prop-types';
 import axios from 'axios';
 import { PAGINATION_VIEW, ListView, Spinner } from 'patternfly-react';
 import * as config from 'hunt_common/config/Api';
-import { HuntList } from '../../HuntList';
 import HuntPaginationRow from '../../HuntPaginationRow';
-import FilterItem from '../../FilterItem';
-import { buildListUrlParams } from '../../helpers/common';
+import ActionItem from '../../ActionItem';
 import ErrorHandler from '../../components/Error';
+import { actionsButtons,
+    buildListUrlParams,
+    loadActions,
+    createAction,
+    closeAction,
+    buildFilter } from '../../helpers/common';
 
-export default class ActionsPage extends HuntList {
+export class ActionsPage extends React.Component {
     constructor(props) {
         super(props);
         this.state = { data: [], count: 0, rulesets: [] };
+
+        this.buildFilter = buildFilter.bind(this);
+        this.actionsButtons = actionsButtons.bind(this);
+        this.createAction = createAction.bind(this);
+        this.closeAction = closeAction.bind(this);
+        this.loadActions = loadActions.bind(this);
         this.fetchData = this.fetchData.bind(this);
         this.needUpdate = this.needUpdate.bind(this);
         this.buildListUrlParams = buildListUrlParams.bind(this);
+        this.updateActionListState = this.updateActionListState.bind(this);
     }
 
     componentDidMount() {
@@ -49,19 +60,24 @@ export default class ActionsPage extends HuntList {
                 this.setState({ rulesets });
             });
         }
-        this.fetchData(this.props.config, this.props.filters);
+        this.fetchData();
     }
 
     componentDidUpdate(prevProps) {
-        if (prevProps.from_date !== this.props.from_date) {
-            this.fetchData(this.props.config, this.props.filters);
+        if (JSON.stringify(prevProps.filterParams) !== JSON.stringify(this.props.filterParams)) {
+            this.fetchData();
         }
     }
 
+    updateActionListState(rulesListState) {
+        this.props.updateListState(rulesListState, () => this.fetchData());
+    }
+
     // eslint-disable-next-line no-unused-vars
-    fetchData(filtersStat, filters) {
+    fetchData() {
+        const listParams = this.buildListUrlParams(this.props.rules_list);
         this.setState({ loading: true });
-        axios.get(`${config.API_URL}${config.PROCESSING_PATH}?${this.buildListUrlParams(filtersStat)}`)
+        axios.get(`${config.API_URL}${config.PROCESSING_PATH}?${listParams}`)
         .then((res) => {
             this.setState({ data: res.data.results, count: res.data.count, loading: false });
         }).catch(() => {
@@ -70,7 +86,7 @@ export default class ActionsPage extends HuntList {
     }
 
     needUpdate() {
-        this.fetchData(this.props.config, this.props.filters);
+        this.fetchData();
     }
 
     render() {
@@ -79,31 +95,25 @@ export default class ActionsPage extends HuntList {
                 <Spinner loading={this.state.loading}></Spinner>
                 <ListView>
                     {this.state.data && this.state.data.map((item) => (
-                        <FilterItem key={item.pk} data={item} switchPage={this.props.switchPage} last_index={this.state.count} needUpdate={this.needUpdate} rulesets={this.state.rulesets} from_date={this.props.from_date} />
+                        <ActionItem switchPage={this.props.switchPage} key={item.pk} data={item} last_index={this.state.count} needUpdate={this.needUpdate} rulesets={this.state.rulesets} filterParams={this.props.filterParams} />
                     ))}
                 </ListView>
                 <ErrorHandler>
                     <HuntPaginationRow
                         viewType={PAGINATION_VIEW.LIST}
-                        pagination={this.props.config.pagination}
-                        onPaginationChange={this.handlePaginationChange}
-                        amountOfPages={Math.ceil(this.state.count / this.props.config.pagination.perPage)}
-                        pageInputValue={this.props.config.pagination.page}
-                        itemCount={this.state.count - 1} // used as last item
-                        itemsStart={(this.props.config.pagination.page - 1) * this.props.config.pagination.perPage}
-                        itemsEnd={Math.min((this.props.config.pagination.page * this.props.config.pagination.perPage) - 1, this.state.count - 1)}
-                        onFirstPage={this.onFirstPage}
-                        onNextPage={this.onNextPage}
-                        onPreviousPage={this.onPrevPage}
-                        onLastPage={this.onLastPage}
-
+                        onPaginationChange={this.updateActionListState}
+                        itemsCount={this.state.count}
+                        itemsList={this.props.rules_list}
                     />
                 </ErrorHandler>
             </div>
         );
     }
 }
+
 ActionsPage.propTypes = {
-    config: PropTypes.any,
-    filters: PropTypes.any,
+    rules_list: PropTypes.any,
+    updateListState: PropTypes.func,
+    switchPage: PropTypes.any,
+    filterParams: PropTypes.object.isRequired
 };

@@ -32,24 +32,28 @@ import find from 'lodash/find';
 import { Badge, ListGroup, ListGroupItem } from 'react-bootstrap';
 import * as config from 'hunt_common/config/Api';
 import { dashboard } from 'hunt_common/config/Dashboard';
+import { buildQFilter } from 'hunt_common/buildQFilter';
+import { buildFilterParams } from 'hunt_common/buildFilterParams';
+import RuleToggleModal from 'hunt_common/RuleToggleModal';
+import { sections } from 'hunt_common/constants';
 import HuntTimeline from '../../HuntTimeline';
 import HuntTrend from '../../HuntTrend';
-import { buildQFilter } from '../../helpers/buildQFilter';
-import RuleToggleModal from '../../RuleToggleModal';
-import { actionsButtons, addFilter, UpdateFilter, loadActions, createAction, closeAction } from '../../helpers/common';
-import { HuntFilter } from '../../HuntFilter';
+import { actionsButtons, loadActions, createAction, closeAction } from '../../helpers/common';
+import HuntFilter from '../../HuntFilter';
 import EventValue from '../../components/EventValue';
 import '../../../node_modules/react-grid-layout/css/styles.css';
 import '../../../node_modules/react-resizable/css/styles.css';
 import ErrorHandler from '../../components/Error';
+import copyTextToClipboard from '../../helpers/copyTextToClipboard';
+import storage from '../../helpers/storage';
 
 const ResponsiveReactGridLayout = WidthProvider(Responsive);
 
-export default class HuntDashboard extends React.Component {
+export class HuntDashboard extends React.Component {
     constructor(props) {
         super(props);
 
-        let onlyHits = localStorage.getItem('rules_list.only_hits');
+        let onlyHits = storage.getItem('rules_list.only_hits');
         if (!onlyHits) {
             onlyHits = false;
         }
@@ -67,6 +71,7 @@ export default class HuntDashboard extends React.Component {
 
         const huntFilters = store.get('huntFilters');
         const rulesFilters = (typeof huntFilters !== 'undefined' && typeof huntFilters.dashboard !== 'undefined') ? huntFilters.dashboard.data : [];
+        const chartTarget = (store.get('chartTarget') === true);
         this.state = {
             load: Object.keys(dashboard.sections),
             // load: ['basic'],
@@ -77,9 +82,7 @@ export default class HuntDashboard extends React.Component {
             rulesets: [],
             rules_count: 0,
             loading: true,
-            refresh_data: false,
             view: 'rules_list',
-            display_toggle: true,
             onlyHits,
             action: { view: false, type: 'suppress' },
             net_error: undefined,
@@ -88,14 +91,16 @@ export default class HuntDashboard extends React.Component {
             moreModal: null,
             moreResults: [],
             editMode: false,
+            chartTarget,
+            copyMode: false,
+            hoveredItem: null,
+            copiedItem: '',
         };
         this.actionsButtons = actionsButtons.bind(this);
-        this.UpdateFilter = UpdateFilter.bind(this);
         this.createAction = createAction.bind(this);
         this.closeAction = closeAction.bind(this);
         this.loadActions = loadActions.bind(this);
         this.updateRuleListState = props.updateListState.bind(this);
-        this.addFilter = addFilter.bind(this);
         this.fetchData = () => {};
     }
 
@@ -158,6 +163,17 @@ export default class HuntDashboard extends React.Component {
         if (this.props.filters.length) {
             this.loadActions(this.props.filters);
         }
+
+        const detectspecialkeys = (e, keyDown) => {
+            if (e.keyCode === 17) {
+                if (this.state.copyMode !== keyDown) {
+                    this.setState({ copyMode: keyDown });
+                }
+            }
+        };
+
+        document.onkeydown = (e) => detectspecialkeys(e, true);
+        document.onkeyup = (e) => detectspecialkeys(e, false);
     }
 
     componentDidUpdate(prevProps) {
@@ -170,16 +186,17 @@ export default class HuntDashboard extends React.Component {
         if (typeof this.props.systemSettings !== 'undefined') {
             this.qFilter = this.generateQFilter();
             this.storedMicroLayout = store.get('dashboardMicroLayout');
-            this.storedMacroLayout = store.get('dashboardMаcroLayout');
+            this.storedMacroLayout = store.get('dashboardMacroLayout');
             // Initial booting of panels were moved here instead of componentDidMount, because of the undefined systemSettings in componentDidMount
             if (this.panelsBooted === 'no') {
                 this.bootPanels();
             } else if (!this.filters.length) {
                 this.filters = JSON.stringify(this.props.filters);
-            } else if (this.panelsBooted !== 'booting' && (this.filters !== JSON.stringify(this.props.filters) || prevProps.from_date !== this.props.from_date)) {
+            } else if (this.panelsBooted !== 'booting' && (this.filters !== JSON.stringify(this.props.filters) || JSON.stringify(prevProps.filtersWithAlert) !== JSON.stringify(this.props.filtersWithAlert) || JSON.stringify(prevProps.filterParams) !== JSON.stringify(this.props.filterParams))) {
                 this.filters = JSON.stringify(this.props.filters);
                 this.resetPanelHeights();
                 this.bootPanels();
+                this.loadActions(this.props.filters);
             }
         }
     }
@@ -201,7 +218,7 @@ export default class HuntDashboard extends React.Component {
     };
 
     generateQFilter = () => {
-        let qfilter = buildQFilter(this.props.filters, this.props.systemSettings);
+        let qfilter = buildQFilter(this.props.filtersWithAlert, this.props.systemSettings);
         if (!qfilter) {
             qfilter = '';
         }
@@ -274,29 +291,34 @@ export default class HuntDashboard extends React.Component {
         let blocksLoaded = 0;
         let newHeight = 0;
         const array = this.state.dashboard[panel].items;
-        for (let j = 0; j < array.length; j += 1) {
-            const block = array[j];
-            axios.get(`${config.API_URL + config.ES_BASE_PATH
-            }field_stats/?field=${block.i
-            }&from_date=${this.props.from_date
-            }&page_size=5${this.qFilter}`)
-            .then((json) => {
-                // Validation of the data property
-                if (typeof json.data === 'undefined' || json.data === null) { json.data = []; }
+        const filterParams = buildFilterParams(this.props.filterParams);
+        let filterList = `${array[0].i}`;
+        for (let j = 1; j < array.length; j += 1) {
+            filterList += `,${array[j].i}`;
+        }
+        axios.get(`${config.API_URL + config.ES_BASE_PATH
+        }fields_stats/?fields=${filterList}&${filterParams
+        }&page_size=5${this.qFilter}`)
+        .then((gjson) => {
+            // Validation of the data property
+            if (typeof gjson.data === 'undefined' || gjson.data === null) { gjson.data = []; }
 
+            for (let j = 0; j < array.length; j += 1) {
+                const block = array[j];
+                const json = (block.i in gjson.data) ? gjson.data[block.i] : [];
                 // When all of the blocks from a single panel are loaded, then mark the panel as loaded
                 blocksLoaded += 1;
                 if (blocksLoaded === this.state.dashboard[panel].items.length) {
                     this.panelsLoaded += 1;
                 }
 
-                const height = Math.ceil(((json.data.length * dashboard.block.defaultItemHeight) + dashboard.block.defaultHeadHeight) / 13);
-                const panelHeight = (json.data.length) ? 10 + (json.data.length * dashboard.block.defaultItemHeight) + dashboard.block.defaultHeadHeight + dashboard.panel.defaultHeadHeight : dashboard.panel.defaultHeadHeight;
+                const height = Math.ceil(((json.length * dashboard.block.defaultItemHeight) + dashboard.block.defaultHeadHeight) / 13);
+                const panelHeight = (json.length) ? 10 + (json.length * dashboard.block.defaultItemHeight) + dashboard.block.defaultHeadHeight + dashboard.panel.defaultHeadHeight : dashboard.panel.defaultHeadHeight;
                 const isPanelLoaded = (!this.state.dashboard[panel].items.find((itm) => itm.data !== null && itm.data.length === 0));
 
                 const items = this.panelState.dashboard[panel].items.map((el) => {
                     if (el.i === block.i) {
-                        const data = (json.data.length) ? json.data : [];
+                        const data = (json.length) ? json : [];
 
                         if (data) {
                             for (let idx = 0; idx < data.length; idx += 1) {
@@ -375,12 +397,38 @@ export default class HuntDashboard extends React.Component {
                         ...this.panelState,
                     });
                 }
-            });
-        }
+            }
+        });
     };
 
+    itemCopyModeOnClick = (event, itemPath, key, parentElem) => {
+        if (event.ctrlKey) {
+            this.setState({ copiedItem: itemPath });
+            setTimeout(() => {
+                this.setState({ copiedItem: '' });
+            }, 1500);
+            copyTextToClipboard(key, parentElem);
+        }
+    }
+
+    onMouseMove = (event, itemPath) => {
+        if (this.state.hoveredItem !== itemPath) {
+            this.setState({ hoveredItem: itemPath });
+        }
+        if (this.state.copyMode !== event.ctrlKey) {
+            this.setState({ copyMode: event.ctrlKey });
+        }
+    }
+
+    onMouseLeave = (event, itemPath) => {
+        if (this.state.hoveredItem === itemPath) {
+            this.setState({ hoveredItem: null });
+        }
+    }
+
     createElement = (block) => {
-        const url = `${config.API_URL}${config.ES_BASE_PATH}field_stats/?field=${block.i}&from_date=${this.props.from_date}&page_size=30${this.qFilter}`;
+        const filterParams = buildFilterParams(this.props.filterParams);
+        const url = `${config.API_URL}${config.ES_BASE_PATH}field_stats/?field=${block.i}&${filterParams}&page_size=30${this.qFilter}`;
         return (
             <div key={block.i}
                 style={{ background: 'white' }}
@@ -393,16 +441,36 @@ export default class HuntDashboard extends React.Component {
                 <div className="hunt-stat-body">
                     <ListGroup>
                         {block.data === null && <Spinner loading />}
-                        {block.data !== null && block.data.map((item) => (
-                            <ListGroupItem key={item.key}>
+                        {block.data !== null && block.data.map((item) => {
+                            const itemPath = `${block.title}-${block.i}-${item.key}`;
+                            let classes = 'dashboard-list-item';
+                            let clickHandler = null;
+                            classes += (this.state.copiedItem === itemPath) ? ' copied' : '';
+
+                            if (this.state.copyMode && this.state.hoveredItem === itemPath) {
+                                // Only set clickHandler during copy mode to let click events reach the magnifiers in EventValue
+                                // otherwise hover and click on magnifiers breaks on Firefox
+                                clickHandler = (event) => this.itemCopyModeOnClick(event, itemPath, item.key);
+                                classes += ' copy-mode';
+                            }
+
+                            return <ListGroupItem
+                                key={item.key}
+                                onClick={clickHandler}
+                                onMouseMove={(event) => this.onMouseMove(event, itemPath)}
+                                onMouseLeave={(event) => this.onMouseLeave(event, itemPath)}
+                                className={classes}
+                            >
                                 <ErrorHandler>
                                     <EventValue field={block.i}
                                         value={item.key}
-                                        addFilter={this.addFilter}
+                                        magnifiers={(!this.state.copyMode || this.state.hoveredItem !== itemPath) && item.key !== 'Unknown'}
                                         right_info={<Badge>{item.doc_count}</Badge>}
+                                        hasCopyShortcut
                                     />
                                 </ErrorHandler>
-                            </ListGroupItem>))}
+                            </ListGroupItem>;
+                        })}
                     </ListGroup>
                 </div>
             </div>
@@ -445,10 +513,7 @@ export default class HuntDashboard extends React.Component {
     };
 
     switchEditMode = (e) => {
-        this.setState({
-            ...this.state,
-            editMode: !this.state.editMode
-        });
+        this.setState({ editMode: !this.state.editMode });
         e.preventDefault();
     }
 
@@ -505,10 +570,7 @@ export default class HuntDashboard extends React.Component {
                 }
             };
         }
-        this.setState({
-            ...this.state,
-            dashboard: tmpState
-        });
+        this.setState({ dashboard: tmpState });
     };
 
     onDragStartMicro = () => {
@@ -572,10 +634,7 @@ export default class HuntDashboard extends React.Component {
     onBreakPointChange = (breakpoint) => {
         if (this.state.breakPoint !== breakpoint) {
             this.breakPointChanged = true;
-            this.setState({
-                ...this.state,
-                breakPoint: breakpoint
-            });
+            this.setState({ breakPoint: breakpoint });
         }
     };
 
@@ -592,37 +651,46 @@ export default class HuntDashboard extends React.Component {
                 }
             }
 
-            this.setState({ ...this.state, moreModal: item, moreResults: json.data });
+            this.setState({ moreModal: item, moreResults: json.data });
         });
     }
 
     hideMoreModal = () => this.setState({ ...this.state, moreModal: null });
+
+    onChangeChartTarget = (chartTarget) => {
+        this.setState({
+            chartTarget
+        });
+
+        store.set('chartTarget', chartTarget);
+    }
 
     render() {
         return (
             <div className="HuntList">
                 <ErrorHandler>
                     <HuntFilter
-                        ActiveFilters={this.props.filters}
                         config={this.props.rules_list}
                         ActiveSort={this.props.rules_list.sort}
-                        UpdateFilter={this.UpdateFilter}
                         UpdateSort={this.UpdateSort}
-                        setViewType={this.setViewType}
                         filterFields={this.state.rulesFilters}
                         sort_config={undefined}
-                        displayToggle={undefined}
                         actionsButtons={this.actionsButtons}
-                        queryType={['filter']}
+                        queryType={['filter', 'filter_host_id']}
+                        page={this.props.page}
+                        filterType={sections.GLOBAL}
                     />
                 </ErrorHandler>
 
                 <div className="row">
                     <div className="col-lg-10 col-md-9 col-sm-12 col-xs-12" style={{ paddingRight: '0px' }}>
-                        <HuntTimeline style={{ marginTop: '15px' }} from_date={this.props.from_date} filters={this.props.filters} systemSettings={this.props.systemSettings} />
+                        <HuntTimeline style={{ marginTop: '15px' }} filterParams={this.props.filterParams} chartTarget={this.state.chartTarget} filters={this.props.filtersWithAlert} systemSettings={this.props.systemSettings} />
                     </div>
                     <div className="col-lg-2 col-md-3 col-sm-12 col-xs-12" style={{ paddingLeft: '0px' }}>
-                        <HuntTrend from_date={this.props.from_date} filters={this.props.filters} />
+                        <HuntTrend filterParams={this.props.filterParams} filters={this.props.filtersWithAlert} systemSettings={this.props.systemSettings} />
+                        {typeof this.state.chartTarget !== 'undefined' && (process.env.REACT_APP_HAS_TAG === '1' || process.env.NODE_ENV === 'development') && <div style={{ position: 'absolute', zIndex: 10, top: 0, right: '30px' }}>
+                            <DropdownKebab id={'more-actions'} pullRight><MenuItem onClick={() => this.onChangeChartTarget(!this.state.chartTarget)} data-toggle="modal">Switch timeline by probes/tags</MenuItem></DropdownKebab>
+                        </div>}
                     </div>
                 </div>
                 <div className="row drag-and-drop-container">
@@ -630,7 +698,7 @@ export default class HuntDashboard extends React.Component {
 
                         <div className="pull-right">
                             <a href={'#edit'} onClick={this.switchEditMode}>{(this.state.editMode) ? 'switch off edit mode' : 'edit'}</a>
-                            <span> • </span>
+                            <span> • </span> {/* ignore_utf8_check: 8226 */}
                             <a href={'#reset'} onClick={this.resetDashboard}>reset</a>
                         </div>
                         <div className="clearfix" />
@@ -688,22 +756,54 @@ export default class HuntDashboard extends React.Component {
                     </div>
                 </div>
                 <ErrorHandler>
-                    <RuleToggleModal show={this.state.action.view} action={this.state.action.type} config={this.props.rules_list} filters={this.props.filters} close={this.closeAction} rulesets={this.state.rulesets} />
+                    {this.state.action.view && <RuleToggleModal
+                        show={this.state.action.view}
+                        action={this.state.action.type}
+                        config={this.props.rules_list}
+                        filters={this.props.filters}
+                        close={this.closeAction}
+                        rulesets={this.state.rulesets}
+                        systemSettings={this.props.systemSettings}
+                        filterParams={this.props.filterParams}
+                    />}
                 </ErrorHandler>
                 <Modal show={!(this.state.moreModal === null)} onHide={() => { this.hideMoreModal(); }}>
 
                     <Modal.Header>More results <Modal.CloseButton closeText={'Close'} onClick={() => { this.hideMoreModal(); }} /> </Modal.Header>
                     <Modal.Body>
-                        <div className="hunt-stat-body">
+                        <div className="hunt-stat-body" id="more-result-modal">
                             <ListGroup>
-                                {this.state.moreResults.map((item) => (
-                                    <ListGroupItem key={item.key}>
-                                        {this.state.moreModal && <EventValue field={this.state.moreModal.i}
-                                            value={item.key}
-                                            addFilter={this.addFilter}
-                                            right_info={<Badge>{item.doc_count}</Badge>}
-                                        />}
-                                    </ListGroupItem>))}
+                                {this.state.moreModal && this.state.moreResults.map((item) => {
+                                    const itemPath = `modal-${this.state.moreModal.title}-${this.state.moreModal.i}-${item.key}`;
+                                    let classes = 'dashboard-list-item';
+                                    let clickHandler = null;
+                                    classes += (this.state.copiedItem === itemPath) ? ' copied' : '';
+
+                                    if (this.state.copyMode && this.state.hoveredItem === itemPath) {
+                                        // Only set clickHandler during copy mode to let click events reach the magnifiers in EventValue
+                                        // otherwise hover and click on magnifiers breaks on Firefox
+                                        const moreResultModal = document.getElementById('more-result-modal');
+                                        clickHandler = (event) => this.itemCopyModeOnClick(event, itemPath, item.key, moreResultModal);
+                                        classes += ' copy-mode';
+                                    }
+
+                                    return <ListGroupItem
+                                        key={item.key}
+                                        onClick={clickHandler}
+                                        onMouseMove={(event) => this.onMouseMove(event, itemPath)}
+                                        onMouseLeave={(event) => this.onMouseLeave(event, itemPath)}
+                                        className={classes}
+                                    >
+                                        {this.state.moreModal && <ErrorHandler>
+                                            <EventValue field={this.state.moreModal.i}
+                                                value={item.key}
+                                                magnifiers={!this.state.copyMode || this.state.hoveredItem !== itemPath}
+                                                right_info={<Badge>{item.doc_count}</Badge>}
+                                                hasCopyShortcut
+                                            />
+                                        </ErrorHandler>}
+                                    </ListGroupItem>;
+                                })}
                             </ListGroup>
                         </div>
                     </Modal.Body>
@@ -716,9 +816,11 @@ export default class HuntDashboard extends React.Component {
 HuntDashboard.propTypes = {
     systemSettings: PropTypes.any,
     filters: PropTypes.any,
-    from_date: PropTypes.any,
     children: PropTypes.any,
     item: PropTypes.any,
     rules_list: PropTypes.any,
     updateListState: PropTypes.any,
+    page: PropTypes.any,
+    filtersWithAlert: PropTypes.array,
+    filterParams: PropTypes.object.isRequired
 }

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-from __future__ import unicode_literals
+
 
 from django.db import models, migrations
+import django.db.models.deletion
 import suricata.models
 
 
@@ -21,7 +22,7 @@ class Migration(migrations.Migration):
                 ('output_directory', models.CharField(max_length=400)),
                 ('created_date', models.DateTimeField(verbose_name=b'date created')),
                 ('updated_date', models.DateTimeField(verbose_name=b'date updated', blank=True)),
-                ('ruleset', models.ForeignKey(blank=True, to='rules.Ruleset', null=True)),
+                ('ruleset', models.ForeignKey(blank=True, to='rules.Ruleset', null=True, on_delete=django.db.models.deletion.CASCADE)),
             ],
             options={
             },

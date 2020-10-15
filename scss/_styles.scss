@@ -1,8 +1,16 @@
 @import "./_variables.scss";
 @import "./_mixins.scss";
 
+
+@media screen and (max-width: 1280px) {
+  .logo-title {
+     display: none;
+  }
+}
+
 body {
-  font-family: 'Open Sans', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  color: black;
   margin-top: 0;
   .label {
     font-size: 85%;
@@ -31,7 +39,7 @@ body {
   .nav-tabs > li.active > a,
   .nav-tabs > li.active > a:hover,
   .nav-tabs > li.active > a:focus {
-    color: darken($brand-color, 20%);
+    color: darken($brand-color, 0%);
   }
   ul.dropdown-menu li {
     padding-right: 0;
@@ -98,6 +106,9 @@ body {
   .list-view-pf-left .pficon.list-view-pf-icon-success {
     border-color: $success-color;
   }
+  .list-view-pf-left .pficon.list-view-pf-icon-warning {
+    border-color: $warning-color;
+  }
   .list-view-pf-left .pficon.list-view-pf-icon-danger {
     border-color: $danger-color;
   }
@@ -113,5 +124,81 @@ body {
   div.card-pf-item.failure
   {
     color: $danger-color;
+  }
+  .brand-color, h2.brand-color {
+    color: $brand-color;
+  }
+  .light-background {
+    background-color: $light-background;
+  }
+  .logo-title {
+     float: right;
+     padding-left: 26px;
+     margin-right: 60px;
+     color: white;
+     font-size: 20px;
+  }
+  img#img-logo {
+     padding: 0px;
+     margin: 0px;
+     margin-top: 1px;
+     height: 32px;
+     vertical-align: middle;
+  }
+  .navbar.navbar-default {
+     background-color: $brand-color;
+     margin-right: -20px;
+     margin-left: -20px;
+     padding-left: 0px;
+     padding-right: 0px;
+     height: 64px;
+     color: #dcddde;
+     line-height: 64px;
+     border: none;
+     border-bottom: solid 1px $brand-green;
+     z-index: 200;
+  }
+  .navbar-default .navbar-nav > li > a {
+     line-height: 64px;
+     font-size: 12px;
+     padding-top: 0px;
+     padding-bottom: 0px;
+     color: #dcddde;
+  }
+  .navbar-default .navbar-nav > .open > a, .navbar-default .navbar-nav > .open > a:hover, .navbar-default .navbar-nav > .open > a:focus {
+     background-color: $brand-color;
+     color: white;
+  }
+  .navbar-default .navbar-nav > li > a:hover, .navbar-default .navbar-nav > li > a:focus {
+     color: white;
+     line-height: 64px;
+  }
+  .navbar-collapse.in, .navbar-collapse.collapsing {
+     background-color: $brand-color;
+  }
+  input[type="text"]#id_search {
+     padding-bottom: 0px;
+     padding-top: 0px;
+     color: $brand-color;
+  }
+  .navbar-form {
+     padding-top: 0px;
+     padding-bottom: 0px;
+     margin-top: 0px;
+     margin-bottom: 0px;
+  }
+  .caret {
+     color: white;
+  }
+  .applauncher-pf-link-title {
+     color: $brand-color;
+  }
+  .navbar-default.home-menu {
+     margin-left: 0px;
+     margin-right: 0px;
+  }
+  .form-group.sn-drop-down {
+     margin-left: 5px;
+     color: black;
   }
 }

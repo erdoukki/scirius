@@ -1,23 +1,29 @@
-$color-pf-black:                #030303 !default;
+$color-pf-black:                #414042 !default;
 $color-pf-white:                #fff !default;
 $color-sn-border:               #ddd !default;
 $color-sn-menu:                 #f5f5f5 !default;
-$color-sn-purple:               #7b1244 !default;
+$color-sn-purple:               #005792 !default;
 $color-sn-purple-light:         lighten($color-sn-purple, 10%) !default;
+$color-sn-bgreen:               #0297A9 !default;
+
+$color-sn-purple-20:         	lighten($color-sn-purple, 20%) !default;
+$color-sn-purple-40:         	lighten($color-sn-purple, 40%) !default;
 
 $color-pf-blue:                 $color-sn-purple !default;
 //$color-pf-blue:                  #AD9C9B !default;
-$color-pf-blue-25:               #e4cdcc !default;
-$color-pf-blue-50:               #dcc6c5 !default;
-$color-pf-blue-100:              #c8b4b3 !default;
-$color-pf-blue-200:              #b8a6a5 !default;
-$color-pf-blue-300:              #a49493 !default;
-$color-pf-blue-400:              #766a6a !default;
-$color-pf-blue-500:              #675d5c !default;
-$color-pf-blue-600:              #4d4645 !default;
-$color-pf-blue-700:              #3b3635 !default;
+$color-pf-blue-20:               lighten($color-sn-purple, 20%) !default;
+$color-pf-blue-25:               lighten($color-sn-purple, 60%) !default;
+$color-pf-blue-50:               lighten($color-sn-purple, 62%) !default;
+$color-pf-blue-100:              lighten($color-sn-purple, 66%) !default;
+$color-pf-blue-200:              lighten($color-sn-purple, 70%) !default;
+$color-pf-blue-300:              lighten($color-sn-purple, 80%) !default;
+$color-pf-blue-400:              lighten($color-sn-purple, 85%) !default;
+$color-pf-blue-500:              lighten($color-sn-purple, 90%) !default;
+$color-pf-blue-600:              lighten($color-sn-purple, 95%) !default;
+$color-pf-blue-700:              lighten($color-sn-purple, 98%) !default;
 
-
+$light-background: #dcddde;
+$background-black: #414042;
 
 $link-hover-color:                                                  $color-sn-purple-light !default;
 
@@ -59,6 +65,14 @@ $nav-pf-vertical-active-before-color:                               $color-sn-pu
   to { transform: rotate(360deg); }
 }
 
+*:focus {
+  outline: none !important;
+}
+
+body.cards-pf {
+  color: $color-pf-black;
+}
+
 .rule-card {
   min-height: 200px;
 }
@@ -80,6 +94,7 @@ $nav-pf-vertical-active-before-color:                               $color-sn-pu
 }
 
 .list-view-pf .list-group-item {
+  position: initial !important;
   display: block;
 }
 
@@ -114,39 +129,86 @@ span.eventValue {
   margin-top: 10px;
 }
 
+.nav-pf-vertical {
+  top: 64px
+};
+
 .navbar-pf-vertical {
   border-bottom: $navbar-pf-vertical-border-color $navbar-pf-vertical-border-style $navbar-pf-vertical-border-width;
   border-top: none;
-  -webkit-box-shadow: 3px 2px 3px 0px rgba(123,18,68,0.38);
-  -moz-box-shadow: 3px 2px 3px 0px rgba(123,18,68,0.38);
-  box-shadow: 3px 2px 3px 0px rgba(123,18,68,0.38);
+  border-color: $color-sn-bgreen;
+  background: $color-sn-purple;
+  height: 64px;
+  .navbar-toggle {
+    display: none;
+  }
+  .navbar-toggle:hover .icon-bar,
+  .navbar-toggle:focus .icon-bar {
+    background: #f5f5f5;
+  }
+  .nav {
+    .nav-item-iconic {
+      color: #FFF;
+      .caret,
+      .fa,
+      .pficon {
+        color: #FFF;
+      }
+    }
+    .nav-item-iconic:hover {
+      color: #f5f5f5;
+      .caret,
+      .fa,
+      .glyphicon,
+      .pficon {
+        color: #f5f5f5;
+      }
+    }
+    .nav-item-iconic:focus {
+      color: #f5f5f5;
+      .caret,
+      .fa,
+      .glyphicon,
+      .pficon {
+        color: #f5f5f5;
+      }
+    }
+    .open > .nav-item-iconic,
+    .open > .nav-item-iconic:hover,
+    .open > .nav-item-iconic:focus {
+      .caret,
+      .fa,
+      .pficon {
+        color: #f5f5f5;
+      }
+    }
+  }
+}
+.navbar-pf-vertical.navbar {
+  height: 64px;
+}
+.nav-pf-vertical.nav-pf-vertical-with-badges {
+    width: 180px;
+}
+.layout-pf.layout-pf-fixed .container-pf-nav-pf-vertical {
+    margin-left: 170px;
+    padding-right: 10px;
 }
 
 .about-modal-pf .modal-footer {
     background-color: $color-pf-white;
 }
 
-.list-view-pf-left .pficon.list-view-pf-icon-sm.relevant {
-    color: $color-pf-orange-400;
-    /* border-color: $color-pf-orange-400; */
-}
-
 .list-view-pf-left .fa.list-view-pf-icon-sm.relevant {
     color: $color-pf-orange-400;
-}
-
-.list-view-pf-left .pficon.list-view-pf-icon-sm.informational {
-    color: #675d5c;
-    /* border-color: #675d5c; */
 }
 
 .list-view-pf-left .fa.list-view-pf-icon-sm.informational {
     color: #675d5c;
 }
 
-.list-view-pf-left .pficon.list-view-pf-icon-sm.primary {
+.list-view-pf-left .fa.list-view-pf-icon-sm.primary {
     color: $color-sn-purple;
-    /* border-color: $color-sn-purple; */
 }
 
 .card-pf-aggregate-status-notifications {
@@ -216,9 +278,10 @@ span.eventValue {
   margin: 0px;
   padding: 12px 25px;
   font-size: 16px;
-  background: #fbfbfb;
+  background: $light-background;
   border-top: 1px solid #e4e4e4;
   border-bottom: 1px solid #e4e4e4;
+  color: $color-sn-purple;
 }
 .hunt-stat-body {
 }
@@ -239,14 +302,14 @@ span.eventValue {
   cursor: pointer;
 }
 .react-grid-item.react-grid-placeholder {
-  background: #7b1244 !important;
+  background: $color-sn-purple !important;
 }
 .react-draggable-dragging h2 {
-  background: #7b1244;
+  background: $color-sn-purple;
   color: #FFFFFF;
 }
 .react-draggable-dragging .react-grid-layout {
-  border: 1px solid #7b1244;
+  border: 1px solid $color-sn-purple;
   background: #f5f5f5;
 }
 .RulesList ul.list-inline span.label-info {
@@ -273,6 +336,15 @@ span.eventValue {
 span.label {
   padding-left: 7px;
 }
+
+span.badge {
+  background-color: lighten($background-black, 10%); 
+}
+
+span.hunt-filter.label {
+  background-color: $color-pf-blue;
+}
+
 span.badge.badge-primary {
   margin-left: -6px;
   margin-right: 3px;
@@ -323,4 +395,380 @@ span.badge.badge-primary {
 /* fix c3 bug where sometimes the first x axis tick goes outside the chart */
 g.tick[transform^='translate(-']{
   display: none;
+}
+.form-group-no-margins {
+  margin: 0 !important;
+}
+
+button.dashboard-list-item.list-group-item {
+  background: #FFF;
+  outline: none;
+  cursor: default;
+}
+button.dashboard-list-item.list-group-item.copy-mode:hover {
+  background: #e4e4e4;
+  cursor: pointer;
+}
+button.dashboard-list-item.list-group-item.copy-mode:active {
+  background: $color-sn-purple-40;
+}
+button.dashboard-list-item.list-group-item.copied:hover::before {
+  background: #FFF;
+}
+button.dashboard-list-item.list-group-item.copy-mode.copied:hover::before {
+  background: #e4e4e4;
+}
+button.dashboard-list-item.list-group-item.copied::before {
+  content: 'Copied!';
+  position: absolute;
+  right: 35px;
+  background: #FFF;
+  color: $color-sn-purple-20;
+  font-weight: bold;
+  padding: 0 0 0 20px;
+}
+
+.bootstrap-switch span.bootstrap-switch-handle-on.bootstrap-switch-info {
+  color: $color-pf-black;
+}
+
+.list-view-pf-expand-active .list-group-item-header, .list-view-pf .list-group-item-header:hover {
+  background-color: lighten($color-sn-bgreen, 0%);
+  color: white;
+}
+
+.dropdown-menu {
+  min-width: 100px;
+}
+
+.timespan-picker {
+  position: absolute;
+  right: 0px;
+  background: #FFF;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.175);
+  background-clip: padding-box;
+  border-radius: 1px;
+  border: 1px solid #bbb;
+  padding: 5px 0;
+  z-index: 1000;
+
+  .time-pickers {
+    margin: 0;
+    padding: 0;
+    display: block;
+    border-bottom: 1px solid $color-sn-purple;
+    li {
+      display: inline-block;
+      list-style-type: none;
+      a {
+          display: block;
+          padding: 5px 10px;
+          position: relative;
+        }
+      a:hover, .active {
+        background: $color-sn-purple;
+        color: #FFF;
+        text-decoration: none;
+      }
+      a:hover::after, .active::after {
+        content: '';
+        position: absolute;
+        top: 30px;
+        left: 37%;
+        right: 0;
+        width: 0;
+        height: 0;
+        border-top: solid 6px $color-sn-purple;
+        border-left: solid 10px transparent;
+        border-right: solid 10px transparent;
+      }
+    }
+  }
+  .pickers-content {
+    width: 530px;
+    min-height: 100px;
+    padding: 10px;
+    .picker {
+      display: none;
+
+      // out of calendar containers
+      .submit-date {
+        position: absolute;
+        left: 50%;
+        bottom: 14px;
+      }
+      .submit-date a {
+        display: block;
+        position: relative;
+        left: -50%;
+      }
+
+      // differences between two calendars
+      // footers
+      .calendar-start-date .rc-calendar-footer {
+        text-align: left;
+      }
+      .calendar-end-date .rc-calendar-footer {
+        text-align: right;
+      }
+
+      // common styles for both of the callendars
+      .rc-calendar {
+        border-radius: 0;
+        box-shadow: none;
+        border: none;
+
+        .rc-calendar-footer {
+          padding-bottom: 0;
+          padding-top: 15px;
+        }
+
+        .rc-calendar-input {
+          font-family: Courier, monospace;
+          font-weight: bold;
+        }
+
+        .rc-calendar-disabled-cell {
+          .rc-calendar-date {
+            background: transparent;
+          }
+        }
+
+        .rc-calendar-year-select:hover,
+        .rc-calendar-month-select:hover,
+        .rc-calendar-day-select:hover,
+        .rc-calendar-year-panel-header > a:hover{
+          color: $color-sn-purple;
+        }
+
+        .rc-calendar-year-panel-cell {
+          .rc-calendar-year-panel-year:hover {
+            background: $color-sn-purple-40;
+            text-decoration: none;
+            color: #666;
+          }
+        }
+
+        // Normal cells
+        // day cell
+        .rc-calendar-cell {
+          .rc-calendar-date:hover {
+            background: $color-sn-purple-40;
+            text-decoration: none;
+          }
+        }
+        // Decade cell {
+        .rc-calendar-decade-panel-cell {
+          .rc-calendar-decade-panel-decade:hover {
+            background: $color-sn-purple-40;
+            text-decoration: none;
+            color: #666;
+          }
+        }
+
+
+        // Special cases
+        // today cell
+        .rc-calendar-today {
+          .rc-calendar-date {
+            border: 0px solid $color-sn-purple;
+            border-radius: 3px;
+          }
+        }
+        .rc-calendar-selected-date {
+          .rc-calendar-date {
+            background: $color-sn-purple;
+          }
+          .rc-calendar-date:hover {
+            background: $color-sn-purple;
+          }
+        }
+        // selected cell
+        .rc-calendar-selected-day {
+          .rc-calendar-date,
+          .rc-calendar-date:hover {
+            background: $color-sn-purple;
+            color: #FFF;
+          }
+        }
+        // in range cell
+        .rc-calendar-in-range-cell {
+          background: #fff3f9;
+          .rc-calendar-date {
+            background: #fff3f9;
+          }
+        }
+
+
+        // Month
+        // normal month cell
+        .rc-calendar-month-panel-cell {
+          .rc-calendar-month-panel-month:hover {
+            background: $color-sn-purple-40;
+            text-decoration: none;
+          }
+        }
+
+        // prev / next
+        // day
+        .rc-calendar-last-month-cell {
+          .rc-calendar-date:hover {
+            background: #f1f1f1;
+            color: #afafaf;
+            text-decoration: none;
+          }
+        }
+        // year
+        .rc-calendar-year-panel-last-decade-cell,
+        .rc-calendar-year-panel-next-decade-cell {
+          .rc-calendar-year-panel-year:hover {
+            background: #f1f1f1;
+            color: #afafaf;
+            text-decoration: none;
+          }
+        }
+        // decade
+        .rc-calendar-decade-panel-last-century-cell,
+        .rc-calendar-decade-panel-next-century-cell {
+          .rc-calendar-decade-panel-decade:hover {
+            background: #f1f1f1;
+            color: #afafaf;
+            text-decoration: none;
+          }
+        }
+
+
+        // Selected cell
+        // Month
+        .rc-calendar-month-panel-selected-cell {
+          .rc-calendar-month-panel-month {
+            background: $color-sn-purple;
+          }
+          .rc-calendar-month-panel-month:hover {
+            background: $color-sn-purple-20;
+            text-decoration: none;
+          }
+        }
+
+        // Year
+        .rc-calendar-year-panel-selected-cell {
+          .rc-calendar-year-panel-year {
+            background: $color-sn-purple;
+          }
+          .rc-calendar-year-panel-year:hover {
+            color: #FFF;
+            background: $color-sn-purple-20;
+            text-decoration: none;
+          }
+        }
+
+        // Decade
+        .rc-calendar-decade-panel-selected-cell {
+          .rc-calendar-decade-panel-decade {
+            background: $color-sn-purple;
+          }
+          .rc-calendar-decade-panel-decade:hover {
+            color: #FFF;
+            background: $color-sn-purple-20;
+            text-decoration: none;
+          }
+        }
+
+
+        .rc-calendar-ok-btn,
+        .rc-calendar-time-picker-btn,
+        .rc-calendar-today-btn {
+          color: $color-sn-purple;
+          text-transform: lowercase;
+        }
+        .rc-calendar-time-picker-btn-disabled,
+        .rc-calendar-ok-btn-disabled,
+        .rc-calendar-today-btn-disabled {
+          color: #8c8c8c;
+        }
+
+        .rc-calendar-range-bottom {
+          .rc-calendar-footer-btn {
+            padding: 17px 12px 5px 0;
+            .rc-calendar-ok-btn {
+              background: $color-sn-purple;
+              color: #FFF;
+              padding: 5px 20px;
+              border-radius: 3px;
+            }
+            .rc-calendar-ok-btn:hover {
+              text-decoration: none;
+              background: $color-sn-purple-20;
+            }
+            .rc-calendar-time-picker-btn-disabled,
+            .rc-calendar-time-picker-btn-disabled:hover,
+            .rc-calendar-today-btn-disabled,
+            .rc-calendar-today-btn-disabled:hover{
+              cursor: default;
+              text-decoration: none;
+            }
+            .rc-calendar-ok-btn-disabled,
+            .rc-calendar-ok-btn-disabled:hover {
+              cursor: default;
+              background: #dadada;
+              color: #888;
+            }
+          }
+        }
+
+        /*
+        .rc-calendar-in-range-cell {
+          background: #fff3f9;
+        }
+        .rc-calendar-panel {
+          // header
+          .rc-calendar-month-panel-header > a:hover {
+            color: $color-sn-purple;
+          }
+          // calendar footer
+        }
+        */
+      }
+    }
+    .active {
+      display: block;
+    }
+    .hardcoded-stamps {
+      margin: 0;
+      display: block;
+      padding: 30px 65px;
+      li {
+        display: inline-block;
+        list-style-type: none;
+        a {
+          display: block;
+          padding: 3px 10px;
+        }
+        a:hover, .active {
+          background: $color-sn-purple;
+          border-radius: 4px;
+          color: #FFF;
+          text-decoration: none;
+        }
+      }
+    }
+    .relative-stamps {
+      padding-top: 10px;
+      .from {
+        float: left;
+      }
+      .to {
+        float: right;
+      }
+      .set-to-now {
+        text-align: right;
+      }
+      .time-label {
+        color: #737373;
+      }
+    }
+  }
+}
+span.label.label-primary {
+  background: lighten($background-black, 10%); 
 }

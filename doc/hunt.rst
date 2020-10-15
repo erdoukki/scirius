@@ -7,7 +7,7 @@ Introduction
 ------------
 
 Hunt is an interface dedicated to signatures and events visualization and tuning.
-It is available from the top menu of Scirius Enterprise via the ``Hunt`` link.
+It is available from the top menu of Scirius Security Platform via the ``Hunt`` link.
 
 Hunt uses a drill down approach to select events. Filters on protocol metadata
 contained in the alerts events can be simply added by clicking on the magnifier
@@ -48,8 +48,8 @@ Alerts
 This page displays the individual alert events as a list. It is possible to expand an event to
 see all details including metadata about it.
 
-Actions
-~~~~~~~
+Policies
+~~~~~~~~
 
 This page displays the list of actions. The list is ordered and the filter are applied in ascending order.
 
@@ -66,8 +66,8 @@ Home
 
 Link to the Scirius homepage.
 
-Actions
--------
+Policy Action
+-------------
 
 Suppress
 ~~~~~~~~
